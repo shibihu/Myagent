@@ -1,22 +1,20 @@
-"""
-=========================================
-MyAgent
-Main Entry Point
-=========================================
-"""
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.requests import Request
 
-from chat import start_chat
+app = FastAPI(title="MyAgent")
 
+# Static Files
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-def main():
-    print("=" * 40)
-    print("🤖 MyAgent")
-    print("Powered by Groq")
-    print("Type 'exit' to quit.")
-    print("=" * 40)
-
-    start_chat()
+# HTML Templates
+templates = Jinja2Templates(directory="templates")
 
 
-if __name__ == "__main__":
-    main()
+@app.get("/")
+async def home(request: Request):
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request}
+    )
