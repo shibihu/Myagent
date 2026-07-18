@@ -36,7 +36,13 @@
                 </button>
                 <div id="chat-title">ChatGPT 4o</div>
             </div>
-            <button id="toggle-memory-btn" class="pop-btn">🧠 Memory Context</button>
+            <button id="toggle-memory-btn" class="pop-btn" title="Memory Context">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; display: inline-block; vertical-align: text-bottom; margin-right: 6px;">
+                    <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
+                    <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
+                    <path d="M12 5v13"/>
+                </svg>Memory Context
+            </button>
         </div>
         
         <div id="chat-box-wrapper">
@@ -63,10 +69,18 @@
     </div>
 
     <div id="memory-drawer" class="closed">
-        <div class="memory-header"><span>🧠 Long-term Memory</span><button id="close-memory-btn" class="pop-btn">✕</button></div>
+        <div class="memory-header">
+            <span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; display: inline-block; vertical-align: text-bottom; margin-right: 6px;">
+                    <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
+                    <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
+                    <path d="M12 5v13"/>
+                </svg>Long-term Memory
+            </span>
+            <button id="close-memory-btn" class="pop-btn">✕</button>
+        </div>
         <ul id="memory-list"></ul>
     </div>
     <script src="/static/script.js"></script>
 </body>
 </html>
-

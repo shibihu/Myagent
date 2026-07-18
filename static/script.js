@@ -36,24 +36,49 @@ function toggleTyping(show) {
 }
 
 async function copyToClipboard(text) {
+    // 1. Try standard navigator.clipboard
     if (navigator.clipboard && navigator.clipboard.writeText) {
-        return await navigator.clipboard.writeText(text);
-    } else {
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        textarea.style.position = "fixed";  // Avoid scrolling to bottom
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.select();
         try {
-            document.execCommand("copy");
+            await navigator.clipboard.writeText(text);
+            return true;
         } catch (err) {
-            console.error("Fallback copy failed", err);
-            throw err;
-        } finally {
-            document.body.removeChild(textarea);
+            console.warn("navigator.clipboard.writeText failed, using fallback:", err);
         }
     }
+
+    // 2. Fallback using a dummy textarea element
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";  // Prevent scrolling
+    textarea.style.top = "0";
+    textarea.style.left = "0";
+    textarea.style.width = "2em";
+    textarea.style.height = "2em";
+    textarea.style.padding = "0";
+    textarea.style.border = "none";
+    textarea.style.outline = "none";
+    textarea.style.boxShadow = "none";
+    textarea.style.background = "transparent";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    
+    let success = false;
+    try {
+        success = document.execCommand("copy");
+    } catch (err) {
+        console.error("Fallback document.execCommand copy failed", err);
+    } finally {
+        document.body.removeChild(textarea);
+    }
+
+    if (success) {
+        return true;
+    }
+
+    // 3. Ultimate prompt fallback for strict sandbox environments
+    const manualCopy = window.prompt("Your browser blocked direct clipboard access. Copy the code below manually:", text);
+    return manualCopy !== null;
 }
 
 async function simulateStreamingMessage(textBodyElement, replyText, model = null, tokens = 0) {
@@ -131,21 +156,25 @@ function setupMessageUtilities(textBody) {
             e.preventDefault();
             e.stopPropagation();
             try {
-                await copyToClipboard(codeBlock.innerText);
-                // เมื่อก๊อปปี้สำเร็จ เปลี่ยนเป็นไอคอนติ๊กถูก (Check Icon) สั้นๆ 2 วินาที
-                copyBtn.innerHTML = `
-                    <svg viewBox="0 0 24 24" fill="none" stroke="#10a37f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="20 6 9 17 4 12"></polyline>
-                    </svg>
-                `;
-                setTimeout(() => {
+                const res = await copyToClipboard(codeBlock.innerText);
+                if (res) {
+                    // เมื่อก๊อปปี้สำเร็จ เปลี่ยนเป็นไอคอนติ๊กถูก (Check Icon) สั้นๆ 2 วินาที
                     copyBtn.innerHTML = `
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="#10a37f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="20 6 9 17 4 12"></polyline>
                         </svg>
                     `;
-                }, 2000);
+                    setTimeout(() => {
+                        copyBtn.innerHTML = `
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                        `;
+                    }, 2000);
+                } else {
+                    copyBtn.innerHTML = `<span>❌</span>`;
+                }
             } catch (err) {
                 copyBtn.innerHTML = `<span>❌</span>`;
             }
@@ -243,14 +272,26 @@ async function loadChatHistoryList() {
                 <button class="action-chat-btn delete-btn pop-btn" title="Delete" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>
             `;
             
-            actionsDiv.querySelector(".rename-btn").onclick = (e) => { 
+            const renameBtn = actionsDiv.querySelector(".rename-btn");
+            const deleteBtn = actionsDiv.querySelector(".delete-btn");
+
+            const stopProp = (e) => {
+                e.stopPropagation();
+            };
+
+            // Touch events require explicit stopPropagation to avoid triggering list selection on mobile
+            renameBtn.ontouchstart = stopProp;
+            renameBtn.ontouchend = stopProp;
+            renameBtn.onclick = (e) => { 
                 e.preventDefault();
                 e.stopPropagation(); 
                 const t = prompt("ชื่อแชทใหม่:", item.title); 
                 if (t && t.trim() !== "") renameChatSession(item.id, t.trim()); 
             };
             
-            actionsDiv.querySelector(".delete-btn").onclick = (e) => { 
+            deleteBtn.ontouchstart = stopProp;
+            deleteBtn.ontouchend = stopProp;
+            deleteBtn.onclick = (e) => { 
                 e.preventDefault();
                 e.stopPropagation(); 
                 if (confirm(`คุณต้องการลบห้องแชทนี้ใช่หรือไม่?`)) deleteChatSession(item.id); 
@@ -275,7 +316,36 @@ async function loadChatHistoryList() {
 async function switchChatSession(cId) { currentChatId = cId; chatBox.innerHTML = ""; const res = await fetch(`/chats/${cId}`); const d = await res.json(); chatTitle.textContent = d.title; d.messages.forEach(m => renderStaticMessage(m.role, m.content, m.model, m.total_tokens)); loadChatHistoryList(); }
 async function renameChatSession(cId, title) { await fetch(`/chats/${cId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) }); loadChatHistoryList(); }
 async function deleteChatSession(cId) { await fetch(`/chats/${cId}`, { method: "DELETE" }); if (currentChatId === cId) { currentChatId = null; chatBox.innerHTML = ""; chatTitle.textContent = "ChatGPT 4o"; } loadChatHistoryList(); }
-async function loadMemoriesList() { const res = await fetch("/memory"); const d = await res.json(); memoryList.innerHTML = d.memories.length === 0 ? "<li>No memory</li>" : ""; d.memories.forEach((f, i) => { const li = document.createElement("li"); li.className = "memory-item"; li.innerHTML = `<span>${f}</span><button class="memory-delete-btn pop-btn" onclick="deleteMemoryFact(${i})">🗑️</button>`; memoryList.appendChild(li); }); }
+
+async function loadMemoriesList() { 
+    const res = await fetch("/memory"); 
+    const d = await res.json(); 
+    memoryList.innerHTML = d.memories.length === 0 ? "<li>No memory</li>" : ""; 
+    d.memories.forEach((f, i) => { 
+        const li = document.createElement("li"); 
+        li.className = "memory-item"; 
+        li.innerHTML = `<span>${f}</span><button class="memory-delete-btn pop-btn" type="button" title="Delete memory">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 14px; height: 14px;">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+        </button>`; 
+        
+        const delBtn = li.querySelector(".memory-delete-btn");
+        const stopProp = (e) => e.stopPropagation();
+        
+        delBtn.ontouchstart = stopProp;
+        delBtn.ontouchend = stopProp;
+        delBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            deleteMemoryFact(i);
+        };
+        
+        memoryList.appendChild(li); 
+    }); 
+}
+
 async function deleteMemoryFact(i) { await fetch(`/memory/${i}`, { method: "DELETE" }); loadMemoriesList(); }
 
 newChatBtn.onclick = () => { if (!isTypingActive) { currentChatId = null; chatBox.innerHTML = ""; chatTitle.textContent = "ChatGPT 4o"; loadChatHistoryList(); } };
