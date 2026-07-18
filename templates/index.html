@@ -12,7 +12,8 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <!-- Sidebar แถบประวัติซ้ายมือสไตล์ ChatGPT -->
+
+    <!-- Sidebar แถบประวัติซ้ายมือ -->
     <div id="sidebar">
         <div class="sidebar-header">
             <button id="new-chat-btn" class="pop-btn">
@@ -28,7 +29,6 @@
 
     <!-- พื้นที่แสดงแชทหลัก -->
     <div id="main-container">
-        <!-- Top Navigation -->
         <div class="top-bar">
             <div class="top-bar-left">
                 <button id="open-sidebar-btn" class="icon-btn pop-btn hidden" title="Open sidebar">
@@ -39,21 +39,20 @@
             <button id="toggle-memory-btn" class="pop-btn">🧠 Memory Context</button>
         </div>
         
-        <!-- แชทบ็อกซ์ตรงกลาง -->
         <div id="chat-box-wrapper">
             <div id="chat-box"></div>
-            
-            <!-- Typing Indicator -->
             <div id="typing-indicator" class="typing-indicator hidden">
-                <div class="dot"></div>
-                <div class="dot"></div>
-                <div class="dot"></div>
+                <div class="dot"></div><div class="dot"></div><div class="dot"></div>
             </div>
         </div>
 
-        <!-- กล่อง Input ส่งข้อความด้านล่างสุด -->
+        <!-- กล่องอินพุตพร้อมปุ่มเปิด/ปิดระบบค้นหาเว็บสดๆ -->
         <div class="input-container">
             <div class="input-wrapper">
+                <button id="search-web-toggle" class="pop-btn" title="Toggle Web Search">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                    <span>Search</span>
+                </button>
                 <input type="text" id="message-input" placeholder="Message MyAgent..." autocomplete="off">
                 <button id="send-button" class="pop-btn" title="Send message">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
@@ -63,15 +62,11 @@
         </div>
     </div>
 
-    <!-- Memory Drawer แถบขวาสไตล์ Clean Overlay -->
     <div id="memory-drawer" class="closed">
-        <div class="memory-header">
-            <span>🧠 Long-term Memory</span>
-            <button id="close-memory-btn" class="pop-btn">✕</button>
-        </div>
+        <div class="memory-header"><span>🧠 Long-term Memory</span><button id="close-memory-btn" class="pop-btn">✕</button></div>
         <ul id="memory-list"></ul>
     </div>
-
     <script src="/static/script.js"></script>
 </body>
 </html>
+
