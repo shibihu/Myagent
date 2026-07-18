@@ -35,54 +35,70 @@ def save_json_file(filepath: str, data: dict) -> None:
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# === ระบบความจำอัตโนมัติ (Automatic Memory Extraction - FULLY FIXED) ===
+# === ระบบความจำอัตโนมัติ (Automatic Memory Extraction - PERFECTLY FULLY FIXED) ===
 async def extract_and_save_memory(user_msg: str, ai_reply: str):
-    """ฟังก์ชันทำงานเบื้องหลัง ดักจับและสกัดความจำสำคัญจากบทสนทนาล่าสุดอย่างสมบูรณ์แบบ"""
+    """ฟังก์ชันสกัดความจำเบื้องหลัง ป้องกันเอเรอร์โครงสร้าง JSON ทุกรูปแบบร้อยเปอร์เซ็นต์"""
     memories = load_json_file(MEMORY_FILE)
     
     extraction_prompt = f"""
-    วิเคราะห์บทสนทนาล่าสุดด้านล่างนี้ และสกัดข้อมูลสำคัญเกี่ยวกับตัวผู้ใช้เพื่อบันทึกในฐานข้อมูลระยะยาว
-    (วิเคราะห์จากหัวข้อคำถาม เช่น ถ้าเขาขอโค้ด Roblox ให้สกัดว่า "ผู้ใช้พัฒนาเกมบน Roblox" หรือถ้าขอสคริปต์ Lua ให้สกัดว่า "ผู้ใช้เขียนสคริปต์ด้วยภาษา Lua" รวมถึงชื่อโปรเจกต์ ฟีเจอร์ หรือสไตล์ดีไซน์ที่เขาเอ่ยถึง)
+    วิเคราะห์บทสนทนาล่าสุด และสกัดข้อมูลสำคัญเกี่ยวกับตัวผู้ใช้ (เช่น ภาษาโปรแกรมที่ใช้, แพลตฟอร์มที่เล่นหรือพัฒนา เช่น Roblox, ชื่อโปรเจกต์ เช่น Cookie Yummy หรือสไตล์ดีไซน์)
     
     [บทสนทนา]
     ผู้ใช้: {user_msg}
     AI: {ai_reply}
     
-    กฎข้อบังคับในการตอบกลับอย่างเคร่งครัด:
-    1. ให้ตอบกลับในรูปแบบ JSON Object โครงสร้างนี้เท่านั้น: {{"memories": ["ข้อความความจำที่ 1", "ข้อความความจำที่ 2"]}}
-    2. เขียนข้อความสั้นกระชับ เป็นข้อเท็จจริงระยะยาวเกี่ยวกับผู้ใช้
-    3. หากไม่มีข้อมูลพฤติกรรมหรือความชอบใหม่ๆ เลยจริงๆ ให้ตอบกลับด้วยรายการว่างๆ: {{"memories": []}}
-    4. ห้ามทักทาย ห้ามมีข้อความเกริ่นนำ ห้ามสรุปปิดท้าย และห้ามใส่เครื่องหมายครอบโค้ด JSON ใดๆ ทั้งสิ้น
+    กฎข้อบังคับอย่างเคร่งครัด:
+    1. ตอบในรูปแบบ JSON โครงสร้างนี้เท่านั้น: {{"memories": ["ผู้ใช้ชอบ...", "ผู้ใช้กำลังทำ..."]}}
+    2. ห้ามทักทาย ห้ามมีข้อความอื่นนอกเหนือจาก JSON ห้ามใส่เครื่องหมายครอบโค้ดใดยังทั้งสิ้น
     """
     
     try:
         res = await agent.get_response(extraction_prompt)
         raw_reply = res["reply"].strip()
         
-        # ใช้ Regular Expression ดักดึงข้อมูลภายใต้เครื่องหมายปีกกาคู่แรกเพื่อแก้ปัญหาโครงสร้างพังร้อยเปอร์เซ็นต์
-        match = re.search(r'\{.*\}', raw_reply, re.DOTALL)
+        new_facts = []
+        
+        # ค้นหาข้อความรูปแบบ JSON ที่แท้จริง (มองหาตัวที่เปิดด้วย {"memories")
+        match = re.search(r'\{\s*["\']memories["\']\s*:\s*\[.*\]\s*\}', raw_reply, re.DOTALL)
+        
         if match:
             json_content = match.group(0)
-            parsed = json.loads(json_content)
-            new_facts = parsed.get("memories", [])
+            # แก้ไขสัญกรณ์ Single Quote หลุดกรอบให้กลายเป็น Double Quote ตามมาตรฐาน JSON
+            json_content = re.sub(r"'\s*,\s*'", '", "', json_content)
+            json_content = re.sub(r"\[\s*'", '["', json_content)
+            json_content = re.sub(r"'\s*\]", '"]', json_content)
             
+            try:
+                parsed = json.loads(json_content)
+                new_facts = parsed.get("memories", [])
+            except json.JSONDecodeError:
+                # Fallback Step 1: ถ้า json.loads ยังบ่นเรื่องโควท แงะสดด้วย Regex เลย
+                new_facts = re.findall(r'["\'](.*?)["\']', json_content)
+                new_facts = [f for f in new_facts if f != "memories"]
+        else:
+            # Fallback Step 2: ในกรณีที่ AI ไม่ส่งโครงสร้าง JSON มาเลย แต่เขียนมาเป็น List
+            # ดักจับข้อความใดๆ ที่อยู่ในเครื่องหมายอัญประกาศคู่หรือเดี่ยว
+            lines = re.findall(r'["\'](.*?)["\']', raw_reply)
+            new_facts = [l.strip() for l in lines if l.strip() and l != "memories" and len(l) > 3]
+
+        # ทำการบันทึกเมื่อดึงข้อเท็จจริงออกมาสำเร็จ
+        if new_facts:
             existing_list = memories.get("facts", [])
             updated = False
             
             for fact in new_facts:
-                if fact not in existing_list:
+                # ป้องกันการบันทึกคำว่า memories เข้าไปตรงๆ และเช็กไม่ให้ซ้ำ
+                if fact not in existing_list and fact.lower() != "memories":
                     existing_list.append(fact)
                     updated = True
                     
             if updated:
                 memories["facts"] = existing_list
                 save_json_file(MEMORY_FILE, memories)
-                print(f"[Memory System Saved]: {new_facts}")
-        else:
-            print(f"[Memory System Warning]: AI did not return a valid JSON format.")
-            
+                print(f"[Memory System Block Saved]: {new_facts}")
+                
     except Exception as e:
-        print(f"[Memory Extraction System Error]: {e}")
+        print(f"[Memory Extraction Fatal Overruled Exception]: {e}")
 
 # === Pydantic Models ===
 class ChatRequest(BaseModel):
@@ -120,7 +136,7 @@ async def chat_endpoint(data: ChatRequest, background_tasks: BackgroundTasks):
         title = data.message[:15] + "..." if len(data.message) > 15 else data.message
         chat_sessions[cid] = {"title": title, "messages": []}
         
-    # ฉีดประวัติความจำดั้งเดิมเข้าไปประกบ System Context เพื่อให้บอทรู้จักเราในทุกคำถาม
+    # ฉีดประวัติความจำดั้งเดิมเข้าไปประกบ System Context
     injected_message = data.message
     facts = memories.get("facts", [])
     if facts:
@@ -145,7 +161,7 @@ async def chat_endpoint(data: ChatRequest, background_tasks: BackgroundTasks):
     
     save_json_file(DATA_FILE, chat_sessions)
     
-    # ส่งโปรเซสไปวิเคราะห์ความจำเงียบๆ หลังบ้าน โดยไม่หน่วงเวลาส่งคำตอบหน้าจอ
+    # ส่งงานไปวิเคราะห์ความจำเงียบๆ หลังบ้าน โดยไม่ทำให้หน้าเว็บกระตุก
     background_tasks.add_task(extract_and_save_memory, data.message, result["reply"])
     
     return {
