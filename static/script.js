@@ -35,24 +35,54 @@ function toggleTyping(show) {
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-async function renderStreamingMessage(textBodyElement, streamResponse) {
-    const reader = streamResponse.body.getReader();
-    const decoder = new TextDecoder("utf-8");
-    let accumulatedText = "";
+async function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        return await navigator.clipboard.writeText(text);
+    } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";  // Avoid scrolling to bottom
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand("copy");
+        } catch (err) {
+            console.error("Fallback copy failed", err);
+            throw err;
+        } finally {
+            document.body.removeChild(textarea);
+        }
+    }
+}
 
+async function simulateStreamingMessage(textBodyElement, replyText, model = null, tokens = 0) {
     isTypingActive = true;
     textBodyElement.innerHTML = "";
-
-    while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        
-        const chunk = decoder.decode(value, { stream: true });
-        accumulatedText += chunk;
-        
-        textBodyElement.innerHTML = marked.parse(accumulatedText);
+    
+    let currentText = "";
+    const chars = Array.from(replyText); // Safe for emojis/unicode
+    const step = Math.max(1, Math.floor(chars.length / 100)); // Dynamic step size so long responses don't take forever
+    
+    let index = 0;
+    while (index < chars.length) {
+        currentText += chars.slice(index, index + step).join("");
+        index += step;
+        textBodyElement.innerHTML = marked.parse(currentText);
         chatBox.scrollTop = chatBox.scrollHeight;
+        await new Promise(resolve => setTimeout(resolve, 10));
     }
+    
+    // Final render to make sure it's 100% exact
+    textBodyElement.innerHTML = marked.parse(replyText);
+    
+    if (model) {
+        const badge = document.createElement("span");
+        badge.className = "info-badge";
+        badge.textContent = `Model: ${model} | Tokens: ${tokens}`;
+        textBodyElement.appendChild(badge);
+    }
+    
     isTypingActive = false;
     setupMessageUtilities(textBodyElement);
 }
@@ -101,7 +131,7 @@ function setupMessageUtilities(textBody) {
             e.preventDefault();
             e.stopPropagation();
             try {
-                await navigator.clipboard.writeText(codeBlock.innerText);
+                await copyToClipboard(codeBlock.innerText);
                 // เมื่อก๊อปปี้สำเร็จ เปลี่ยนเป็นไอคอนติ๊กถูก (Check Icon) สั้นๆ 2 วินาที
                 copyBtn.innerHTML = `
                     <svg viewBox="0 0 24 24" fill="none" stroke="#10a37f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -168,15 +198,24 @@ async function sendMessage() {
         });
 
         toggleTyping(false);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const resData = await response.json();
+        
         const aiTextBody = createMessageLayout("ai");
         
-        await renderStreamingMessage(aiTextBody, response);
+        // Update currentChatId and sidebar title
+        currentChatId = resData.chat_id;
+        chatTitle.textContent = resData.title;
         
-        const activeChatId = response.headers.get("X-Chat-ID");
-        if (activeChatId) currentChatId = activeChatId;
+        await simulateStreamingMessage(aiTextBody, resData.reply, resData.model, resData.total_tokens);
         
         loadChatHistoryList();
     } catch (error) {
+        console.error(error);
         toggleTyping(false);
         renderStaticMessage("ai", "⚠️ Connection stream broke off or network timed out.");
     }
@@ -195,7 +234,6 @@ async function loadChatHistoryList() {
             const textSpan = document.createElement("span");
             textSpan.className = "chat-link-text";
             textSpan.textContent = item.title;
-            textSpan.onclick = () => { if (!isTypingActive) switchChatSession(item.id); };
             
             const actionsDiv = document.createElement("div");
             actionsDiv.className = "chat-actions";
@@ -220,6 +258,15 @@ async function loadChatHistoryList() {
             
             li.appendChild(textSpan); 
             li.appendChild(actionsDiv); 
+            
+            // Set onclick on the entire li instead of just the span, making it very user-friendly
+            li.onclick = (e) => {
+                if (e.target.closest(".action-chat-btn") || e.target.closest(".chat-actions")) {
+                    return;
+                }
+                if (!isTypingActive) switchChatSession(item.id);
+            };
+            
             historyList.appendChild(li);
         });
     } catch (err) { console.error(err); }
@@ -235,4 +282,3 @@ newChatBtn.onclick = () => { if (!isTypingActive) { currentChatId = null; chatBo
 button.onclick = sendMessage;
 input.onkeydown = (e) => { if (e.key === "Enter") sendMessage(); };
 loadChatHistoryList();
-
