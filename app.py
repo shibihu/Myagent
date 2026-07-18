@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import json
 import asyncio
@@ -7,7 +8,7 @@ from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from agent import ChatAgent
+from agent.agent import ChatAgent
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(BASE_DIR, "chats.json")
@@ -34,55 +35,54 @@ def save_json_file(filepath: str, data: dict) -> None:
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# === ระบบความจำอัตโนมัติ (Automatic Memory Extraction) ===
+# === ระบบความจำอัตโนมัติ (Automatic Memory Extraction - FULLY FIXED) ===
 async def extract_and_save_memory(user_msg: str, ai_reply: str):
-    """ฟังก์ชันทำงานเบื้องหลัง สกัดความจำสำคัญจากบทสนทนาล่าสุด"""
+    """ฟังก์ชันทำงานเบื้องหลัง ดักจับและสกัดความจำสำคัญจากบทสนทนาล่าสุดอย่างสมบูรณ์แบบ"""
     memories = load_json_file(MEMORY_FILE)
     
-    # ส่ง Prompt พิเศษไปถาม AI เพื่อสกัดข้อเท็จจริงสั้นๆ เกี่ยวกับตัวผู้ใช้
     extraction_prompt = f"""
-    วิเคราะห์บทสนทนาล่าสุดด้านล่างนี้ และสกัดข้อมูลสำคัญเกี่ยวกับตัวผู้ใช้ (เช่น ชื่อโปรเจกต์, เกมที่พัฒนา, ภาษาโปรแกรมที่ใช้, สไตล์ดีไซน์ที่ชอบ, ข้อจำกัด, หรือความชอบส่วนตัว)
+    วิเคราะห์บทสนทนาล่าสุดด้านล่างนี้ และสกัดข้อมูลสำคัญเกี่ยวกับตัวผู้ใช้เพื่อบันทึกในฐานข้อมูลระยะยาว
+    (วิเคราะห์จากหัวข้อคำถาม เช่น ถ้าเขาขอโค้ด Roblox ให้สกัดว่า "ผู้ใช้พัฒนาเกมบน Roblox" หรือถ้าขอสคริปต์ Lua ให้สกัดว่า "ผู้ใช้เขียนสคริปต์ด้วยภาษา Lua" รวมถึงชื่อโปรเจกต์ ฟีเจอร์ หรือสไตล์ดีไซน์ที่เขาเอ่ยถึง)
     
     [บทสนทนา]
     ผู้ใช้: {user_msg}
     AI: {ai_reply}
     
-    กฎการตอบกลับ:
-    1. ตอบกลับมาในรูปแบบ JSON Object ที่มี Key ชื่อ "memories" และเป็น Array ของ String เท่านั้น เช่น {{"memories": ["ผู้ใช้กำลังพัฒนาเกมชื่อ Cookie Yummy", "ชอบใช้ดีไซน์ UI สไตล์ดาร์กโทน"]}}
-    2. สกัดเอาเฉพาะข้อเท็จจริงที่ชัดเจนและเป็นประโยชน์ระยะยาว ห้ามเดาหรือสรุปมั่ว
-    3. หากไม่มีข้อมูลใหม่ที่สำคัญ ให้ตอบกลับด้วยรายการว่างๆ: {{"memories": []}}
-    4. ห้ามมีข้อความเกริ่นนำหรือคำอธิบายใดๆ นอกเหนือจาก JSON เด็ดขาด!
+    กฎข้อบังคับในการตอบกลับอย่างเคร่งครัด:
+    1. ให้ตอบกลับในรูปแบบ JSON Object โครงสร้างนี้เท่านั้น: {{"memories": ["ข้อความความจำที่ 1", "ข้อความความจำที่ 2"]}}
+    2. เขียนข้อความสั้นกระชับ เป็นข้อเท็จจริงระยะยาวเกี่ยวกับผู้ใช้
+    3. หากไม่มีข้อมูลพฤติกรรมหรือความชอบใหม่ๆ เลยจริงๆ ให้ตอบกลับด้วยรายการว่างๆ: {{"memories": []}}
+    4. ห้ามทักทาย ห้ามมีข้อความเกริ่นนำ ห้ามสรุปปิดท้าย และห้ามใส่เครื่องหมายครอบโค้ด JSON ใดๆ ทั้งสิ้น
     """
     
     try:
-        # เรียกใช้โมเดลผ่าน agent (แนะนำให้ใช้โมเดลตัวเล็กและเร็วอย่าง llama3-8b เพื่อประหยัดเวลาและ token)
         res = await agent.get_response(extraction_prompt)
         raw_reply = res["reply"].strip()
         
-        # ตัดตัวครอบโค้ดออกหาก AI แอบใส่มา
-        if raw_reply.startswith("```json"):
-            raw_reply = raw_reply.split("```json")[1].split("```")[0].strip()
-        elif raw_reply.startswith("```"):
-            raw_reply = raw_reply.split("```")[1].split("```")[0].strip()
+        # ใช้ Regular Expression ดักดึงข้อมูลภายใต้เครื่องหมายปีกกาคู่แรกเพื่อแก้ปัญหาโครงสร้างพังร้อยเปอร์เซ็นต์
+        match = re.search(r'\{.*\}', raw_reply, re.DOTALL)
+        if match:
+            json_content = match.group(0)
+            parsed = json.loads(json_content)
+            new_facts = parsed.get("memories", [])
             
-        parsed = json.loads(raw_reply)
-        new_facts = parsed.get("memories", [])
-        
-        # นำความจำใหม่มาบันทึกผสมกับความจำเดิม (ป้องกันการบันทึกซ้ำ)
-        existing_list = memories.get("facts", [])
-        updated = False
-        
-        for fact in new_facts:
-            if fact not in existing_list:
-                existing_list.append(fact)
-                updated = True
-                
-        if updated:
-            memories["facts"] = existing_list
-            save_json_file(MEMORY_FILE, memories)
+            existing_list = memories.get("facts", [])
+            updated = False
+            
+            for fact in new_facts:
+                if fact not in existing_list:
+                    existing_list.append(fact)
+                    updated = True
+                    
+            if updated:
+                memories["facts"] = existing_list
+                save_json_file(MEMORY_FILE, memories)
+                print(f"[Memory System Saved]: {new_facts}")
+        else:
+            print(f"[Memory System Warning]: AI did not return a valid JSON format.")
             
     except Exception as e:
-        print(f"[Memory Extraction Error]: {e}")
+        print(f"[Memory Extraction System Error]: {e}")
 
 # === Pydantic Models ===
 class ChatRequest(BaseModel):
@@ -120,22 +120,20 @@ async def chat_endpoint(data: ChatRequest, background_tasks: BackgroundTasks):
         title = data.message[:15] + "..." if len(data.message) > 15 else data.message
         chat_sessions[cid] = {"title": title, "messages": []}
         
-    # --- ฉีดความจำเก่าเข้าไปในระบบเพื่อให้ AI รู้จักเราอยู่ตลอดเวลา ---
+    # ฉีดประวัติความจำดั้งเดิมเข้าไปประกบ System Context เพื่อให้บอทรู้จักเราในทุกคำถาม
     injected_message = data.message
     facts = memories.get("facts", [])
     if facts:
         memory_context = "\n".join([f"- {f}" for f in facts])
-        # ฝังข้อมูลไว้ด้านหน้าคำสั่งหลักเพื่อให้บอทระลึกถึงบริบทของตัวเราได้ทันที
-        injected_message = f"[ข้อมูลความจำเกี่ยวกับผู้ใช้ที่คุณบันทึกไว้คราวก่อน:\n{memory_context}]\n\nคำสั่ง/คำถามปัจจุบัน: {data.message}"
+        injected_message = f"[ข้อมูลความจำถาวรเกี่ยวกับผู้ใช้:\n{memory_context}]\n\nคำสั่งปัจจุบัน: {data.message}"
 
     chat_sessions[cid]["messages"].append({
         "role": "user", 
-        "content": data.message, # เก็บข้อความจริงที่ผู้ใช้พิมพ์ลงประวัติแชทปกติ
+        "content": data.message, 
         "model": None,
         "total_tokens": 0
     })
     
-    # ยิงส่งคำถามพร้อมร่างประวัติความจำจำแลงเข้าไปในระบบประมวลผล
     result = await agent.get_response(injected_message)
     
     chat_sessions[cid]["messages"].append({
@@ -147,7 +145,7 @@ async def chat_endpoint(data: ChatRequest, background_tasks: BackgroundTasks):
     
     save_json_file(DATA_FILE, chat_sessions)
     
-    # เรียกกระบวนการหลังบ้าน (Background Task) แอบดักจับและเรียนรู้ความจำอัตโนมัติ โดยไม่ส่งผลให้ผู้ใช้ต้องรอนาน
+    # ส่งโปรเซสไปวิเคราะห์ความจำเงียบๆ หลังบ้าน โดยไม่หน่วงเวลาส่งคำตอบหน้าจอ
     background_tasks.add_task(extract_and_save_memory, data.message, result["reply"])
     
     return {
@@ -176,7 +174,7 @@ async def rename_chat_session(chat_id: str, data: RenameRequest):
         return {"status": "success", "message": "Chat renamed", "title": data.title}
     raise HTTPException(status_code=404, detail="Chat session not found")
 
-# --- Endpoints ใหม่สำหรับจัดการระบบความจำตรงหน้า UI ---
+# --- Endpoints สำหรับแผงความจำอินเตอร์เฟส ---
 @app.get("/memory")
 async def get_memories():
     memories = load_json_file(MEMORY_FILE)
