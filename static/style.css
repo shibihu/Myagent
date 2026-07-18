@@ -84,3 +84,19 @@ button{
     font-size:16px;
 
 }
+
+.markdown-body {
+    background: transparent;
+    color: white;
+    padding: 0;
+    font-size: 15px;
+}
+
+.markdown-body pre {
+    border-radius: 10px;
+    overflow-x: auto;
+}
+
+.markdown-body code {
+    font-family: Consolas, monospace;
+}
