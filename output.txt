@@ -1,0 +1,81 @@
+Traceback (most recent call last):
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_transports/default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request
+    raise exc from None
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request
+    response = connection.handle_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 103, in handle_request
+    return self._connection.handle_request(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpcore/_sync/http11.py", line 136, in handle_request
+    raise exc
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpcore/_sync/http11.py", line 86, in handle_request
+    self._send_request_headers(**kwargs)
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpcore/_sync/http11.py", line 144, in _send_request_headers
+    with map_exceptions({h11.LocalProtocolError: LocalProtocolError}):
+  File "/usr/local/python/3.12.1/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.LocalProtocolError: Illegal header value b'Bearer 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\n'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/codespace/.local/lib/python3.12/site-packages/groq/_base_client.py", line 1007, in request
+    response = self._client.send(
+               ^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_client.py", line 914, in send
+    response = self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_transports/default.py", line 249, in handle_request
+    with map_httpcore_exceptions():
+  File "/usr/local/python/3.12.1/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.LocalProtocolError: Illegal header value b'Bearer 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\n'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspaces/Myagent/test.py", line 31, in <module>
+    response = client.chat.completions.create(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/groq/resources/chat/completions.py", line 462, in create
+    return self._post(
+           ^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/groq/_base_client.py", line 1284, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/groq/_base_client.py", line 1039, in request
+    raise APIConnectionError(request=request) from err
+groq.APIConnectionError: Connection error.
+============================================================
+Python Test for Groq
+============================================================
+Python Version : 3.12.1 (main, Mar 11 2026, 12:17:56) [GCC 13.3.0]
+API Key Loaded : True
+API Key Prefix : gsk_dNpGwj...
+============================================================
+Sending request to Groq...
+
+API Connection Error
+Exception: APIConnectionError('Connection error.')
+Cause: LocalProtocolError("Illegal header value b'Bearer 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\\n'")
+
+Full Traceback:
