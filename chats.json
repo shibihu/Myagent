@@ -1,0 +1,36 @@
+{
+    "2b39cd7d-0e74-4f79-8d91-cce9d825e4d5": {
+        "title": "Test1",
+        "messages": [
+            {
+                "role": "user",
+                "content": "Create js script for print radom number",
+                "model": null,
+                "total_tokens": 0
+            },
+            {
+                "role": "ai",
+                "content": "### Random Number Generator Script\n```javascript\n// Function to generate a random number between min and max\nfunction generateRandomNumber(min, max) {\n  return Math.floor(Math.random() * (max - min + 1)) + min;\n}\n\n// Example usage:\nconst min = 1;\nconst max = 100;\nconst randomNumber = generateRandomNumber(min, max);\n\n// Print the random number to the console\nconsole.log(`Random number between ${min} and ${max}: ${randomNumber}`);\n```\n\n### Explanation\n* The `generateRandomNumber` function takes two parameters: `min` and `max`.\n* It uses the `Math.random()` function to generate a random number between 0 (inclusive) and 1 (exclusive).\n* The `Math.floor()` function is used to round down the result to the nearest integer.\n* The generated random number is then scaled to the desired range by multiplying it with the difference between `max` and `min` (inclusive), and then adding `min`.\n* In the example usage, we generate a random number between 1 and 100, and print it to the console.\n\n### Running the Script\n* Save the script to a file with a `.js` extension (e.g., `randomNumber.js`).\n* Open a terminal or command prompt and navigate to the directory where you saved the file.\n* Run the script using Node.js: `node randomNumber.js`\n* The script will print a random number to the console.",
+                "model": "llama-3.3-70b-versatile",
+                "total_tokens": 390
+            }
+        ]
+    },
+    "18bf9074-3bac-45e6-86ff-5be91c402efa": {
+        "title": "Test",
+        "messages": [
+            {
+                "role": "user",
+                "content": "Create the save data of js script",
+                "model": null,
+                "total_tokens": 0
+            },
+            {
+                "role": "ai",
+                "content": "To create a save data system in JavaScript, you can use the following approaches:\n\n### 1. LocalStorage\nLocal storage allows you to store data locally on the client's browser. Here's an example of how you can use it:\n\n```javascript\n// Save data\nfunction saveData(data) {\n  localStorage.setItem('saveData', JSON.stringify(data));\n}\n\n// Load data\nfunction loadData() {\n  const savedData = localStorage.getItem('saveData');\n  if (savedData) {\n    return JSON.parse(savedData);\n  } else {\n    return null;\n  }\n}\n\n// Example usage:\nconst data = {\n  name: 'John Doe',\n  score: 100\n};\n\nsaveData(data);\n\nconst loadedData = loadData();\nconsole.log(loadedData);\n```\n\n### 2. SessionStorage\nSession storage is similar to local storage, but it only stores data for the duration of the session.\n\n```javascript\n// Save data\nfunction saveData(data) {\n  sessionStorage.setItem('saveData', JSON.stringify(data));\n}\n\n// Load data\nfunction loadData() {\n  const savedData = sessionStorage.getItem('saveData');\n  if (savedData) {\n    return JSON.parse(savedData);\n  } else {\n    return null;\n  }\n}\n\n// Example usage:\nconst data = {\n  name: 'John Doe',\n  score: 100\n};\n\nsaveData(data);\n\nconst loadedData = loadData();\nconsole.log(loadedData);\n```\n\n### 3. Cookies\nCookies are small text files stored on the client's browser. Here's an example of how you can use them:\n\n```javascript\n// Save data\nfunction saveData(data) {\n  const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days\n  document.cookie = `saveData=${JSON.stringify(data)}; expires=${expires.toUTCString()}`;\n}\n\n// Load data\nfunction loadData() {\n  const cookies = document.cookie.split(';');\n  for (const cookie of cookies) {\n    const [key, value] = cookie.trim().split('=');\n    if (key === 'saveData') {\n      return JSON.parse(value);\n    }\n  }\n  return null;\n}\n\n// Example usage:\nconst data = {\n  name: 'John Doe',\n  score: 100\n};\n\nsaveData(data);\n\nconst loadedData = loadData();\nconsole.log(loadedData);\n```\n\n### 4. IndexedDB\nIndexedDB is a low-level API for storing large amounts of data locally on the client's browser. Here's an example of how you can use it:\n\n```javascript\n// Save data\nfunction saveData(data) {\n  return new Promise((resolve, reject) => {\n    const request = indexedDB.open('saveData', 1);\n    request.onupgradeneeded = (event) => {\n      const db = event.target.result;\n      const objectStore = db.createObjectStore('saveData', { keyPath: 'id' });\n    };\n    request.onsuccess = (event) => {\n      const db = event.target.result;\n      const transaction = db.transaction(['saveData'], 'readwrite');\n      const objectStore = transaction.objectStore('saveData');\n      objectStore.add(data);\n      transaction.oncomplete = () => {\n        db.close();\n        resolve();\n      };\n    };\n    request.onerror = (event) => {\n      reject(event);\n    };\n  });\n}\n\n// Load data\nfunction loadData() {\n  return new Promise((resolve, reject) => {\n    const request = indexedDB.open('saveData', 1);\n    request.onsuccess = (event) => {\n      const db = event.target.result;\n      const transaction = db.transaction(['saveData'], 'readonly');\n      const objectStore = transaction.objectStore('saveData');\n      const request = objectStore.getAll();\n      request.onsuccess = () => {\n        resolve(request.result);\n      };\n      request.onerror = (event) => {\n        reject(event);\n      };\n    };\n    request.onerror = (event) => {\n      reject(event);\n    };\n  });\n}\n\n// Example usage:\nconst data = {\n  id: 1,\n  name: 'John Doe',\n  score: 100\n};\n\nsaveData(data).then(() => {\n  loadData().then((loadedData) => {\n    console.log(loadedData);\n  });\n});\n```\n\nThese are just a few examples of how you can create a save data system in JavaScript. The choice of which approach to use depends on your specific needs and requirements.",
+                "model": "llama-3.3-70b-versatile",
+                "total_tokens": 1014
+            }
+        ]
+    }
+}
