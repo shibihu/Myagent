@@ -4,82 +4,85 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MyAgent AI Chat</title>
-    <!-- โหลดไลบรารีสไตล์เดิมของคุณ เช่น GitHub Markdown, Highlight.js -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
     
-    <!-- สไตล์จัดตำแหน่ง Layout สำหรับ Sidebar -->
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; display: flex; height: 100vh; background-color: #0d1117; color: #c9d1d9; overflow: hidden; }
         
         /* Sidebar Styling */
-        #sidebar { width: 260px; background-color: #161b22; border-right: 1px solid #30363d; display: flex; flex-direction: column; transition: transform 0.3s ease; z-index: 10; }
-        #sidebar.closed { transform: translateX(-260px); position: absolute; height: 100%; }
+        #sidebar { width: 260px; background-color: #161b22; border-right: 1px solid #30363d; display: flex; flex-direction: column; transition: transform 0.3s ease; z-index: 999; }
+        #sidebar.closed { transform: translateX(-260px); width: 0; border: none; }
         .sidebar-header { padding: 10px; border-bottom: 1px solid #30363d; }
-        #new-chat-btn { width: 100%; padding: 10px; background-color: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        #new-chat-btn { width: 100%; padding: 12px; background-color: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 15px; }
         #new-chat-btn:hover { background-color: #30363d; }
         #history-list { flex: 1; overflow-y: auto; padding: 10px; list-style: none; }
-        .history-item { padding: 10px; margin-bottom: 5px; background: #21262d; border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; border: 1px solid transparent; }
+        .history-item { padding: 12px; margin-bottom: 6px; background: #21262d; border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; border: 1px solid transparent; }
         .history-item:hover, .history-item.active { background: #30363d; border-color: #58a6ff; }
         
-        /* Main Chat Area Styling */
-        #main-container { flex: 1; display: flex; flex-direction: column; position: relative; height: 100%; background-color: #0d1117; }
+        /* Main Chat Area */
+        #main-container { flex: 1; display: flex; flex-direction: column; position: relative; height: 100%; background-color: #0d1117; min-width: 0; }
         
         /* Top Control Bar */
-        .top-bar { padding: 10px; background-color: #161b22; border-bottom: 1px solid #30363d; display: flex; align-items: center; }
-        #toggle-sidebar-btn { padding: 6px 12px; background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 4px; cursor: pointer; margin-right: 15px; }
+        .top-bar { padding: 12px; background-color: #161b22; border-bottom: 1px solid #30363d; display: flex; align-items: center; position: relative; }
+        #toggle-sidebar-btn { padding: 8px 14px; background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 6px; cursor: pointer; margin-right: 15px; font-size: 14px; }
+        #chat-title { font-size: 16px; font-weight: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 70%; }
         
         /* Chat Box & Messages */
-        #chat-box { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
-        .message { max-width: 80%; padding: 12px 16px; border-radius: 8px; line-height: 1.5; word-wrap: break-word; }
-        .message.user { align-self: flex-end; background-color: #238636; color: white; }
-        .message.ai { align-self: flex-start; background-color: #161b22; border: 1px solid #30363d; color: #c9d1d9; }
-        .message.error { background-color: #da3637; color: white; }
+        #chat-box { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 15px; }
+        .message { max-width: 85%; padding: 12px 16px; border-radius: 8px; line-height: 1.5; word-wrap: break-word; font-size: 15px; position: relative; }
+        .message.user { align-self: flex-end; background-color: #238636; color: white; border-bottom-right-radius: 2px; }
+        .message.ai { align-self: flex-start; background-color: #161b22; border: 1px solid #30363d; color: #c9d1d9; border-bottom-left-radius: 2px; width: 100%; max-width: 85%; }
         
         /* Input Area */
-        .input-area { padding: 20px; border-top: 1px solid #30363d; display: flex; gap: 10px; background-color: #0d1117; }
-        #message-input { flex: 1; padding: 12px; background-color: #0d1117; border: 1px solid #30363d; color: #c9d1d9; border-radius: 6px; resize: none; font-size: 16px; }
+        .input-area { padding: 15px; border-top: 1px solid #30363d; display: flex; gap: 10px; background-color: #0d1117; }
+        #message-input { flex: 1; padding: 12px; background-color: #161b22; border: 1px solid #30363d; color: #c9d1d9; border-radius: 6px; font-size: 16px; }
         #message-input:focus { border-color: #58a6ff; outline: none; }
-        #send-button { padding: 0 20px; background-color: #238636; border: none; color: white; border-radius: 6px; font-weight: bold; cursor: pointer; }
-        #send-button:hover { background-color: #2ea043; }
+        #send-button { padding: 0 18px; background-color: #238636; border: none; color: white; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 15px; }
         
-        /* Responsive adjust when sidebar is overlayed */
-        #main-container.sidebar-closed { margin-left: 0; }
+        /* --- ปุ่ม Copy Code Container & Styling --- */
+        .markdown-body pre { position: relative; padding-top: 40px !important; }
+        .copy-code-btn { position: absolute; top: 8px; right: 8px; padding: 4px 8px; background-color: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 4px; font-size: 12px; cursor: pointer; font-family: -apple-system, sans-serif; transition: 0.2s; }
+        .copy-code-btn:hover { background-color: #30363d; border-color: #8b949e; }
+
+        /* 📱 Responsive Web Support (สำหรับหน้าจอมือถือ) */
+        @media (max-width: 768px) {
+            #sidebar { position: absolute; height: 100%; left: 0; top: 0; transform: translateX(0); }
+            #sidebar.closed { transform: translateX(-260px); }
+            .message { max-width: 90%; }
+            .message.ai { max-width: 90%; }
+            
+            /* สร้าง Overlay มืดๆ ข้างหลังตอนเปิด Sidebar บนมือถือ */
+            #sidebar:not(.closed)::after { content: ''; position: fixed; top: 0; left: 260px; width: calc(100vw - 260px); height: 100vh; background: rgba(0,0,0,0.5); z-index: -1; }
+        }
     </style>
 </head>
 <body>
 
-    <!-- SIDEBAR ด้านข้าง -->
-    <div id="sidebar">
+    <div id="sidebar" class="closed"> <!-- บังคับปิดไว้ก่อนตอนเริ่มบนมือถือ -->
         <div class="sidebar-header">
             <button id="new-chat-btn">➕ New Chat</button>
         </div>
-        <ul id="history-list">
-            <!-- รายการประวัติแชทจะมาโผล่ตรงนี้แบบไดนามิก -->
-        </ul>
+        <ul id="history-list"></ul>
     </div>
 
-    <!-- พื้นที่แชทหลัก -->
     <div id="main-container">
         <div class="top-bar">
-            <button id="toggle-sidebar-btn">☰ Toggle Sidebar</button>
+            <button id="toggle-sidebar-btn">☰ แถบข้าง</button>
             <h3 id="chat-title">MyAgent - New Chat</h3>
         </div>
 
-        <div id="chat-box">
-            <!-- กล่องข้อความคุย -->
-        </div>
+        <div id="chat-box"></div>
 
         <div class="input-area">
-            <input type="text" id="message-input" placeholder="Type your message here..." autocomplete="off">
-            <button id="send-button">Send</button>
+            <input type="text" id="message-input" placeholder="พิมพ์ข้อความ..." autocomplete="off">
+            <button id="send-button">ส่ง</button>
         </div>
     </div>
 
-    <!-- ดึงสคริปต์ควบคุมการทำงาน -->
     <script src="/static/script.js"></script>
 </body>
 </html>
