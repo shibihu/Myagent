@@ -1,0 +1,15 @@
+{
+  "name": "MyAgent",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  },
+  "postCreateCommand": "python -m pip install --upgrade pip && pip install -r requirements.txt"
+}

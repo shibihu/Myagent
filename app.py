@@ -17,12 +17,15 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 # Initialize Agent
 agent = ChatAgent()
 
+
 class ChatRequest(BaseModel):
     message: str
 
+
 @app.get("/")
 async def index_page(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html", context={"request": request})
+
 
 @app.post("/chat")
 async def chat_endpoint(data: ChatRequest):
