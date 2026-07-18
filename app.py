@@ -1,59 +1,30 @@
+import os
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from agent.agent import ChatAgent
 
-from agent.agent import chat
+# Get the directory where app.py lives
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-app = FastAPI(title="MyAgent")
+app = FastAPI()
 
-# -----------------------------
-# Static Files
-# -----------------------------
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Mount layout assets and templates using dynamic paths
+app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
-# -----------------------------
-# HTML Templates
-# -----------------------------
-templates = Jinja2Templates(directory="templates")
+# Initialize Agent
+agent = ChatAgent()
 
-
-# -----------------------------
-# Home Page
-# -----------------------------
-@app.get("/")
-async def home(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={"request": request},
-    )
-
-
-# -----------------------------
-# Request Model
-# -----------------------------
 class ChatRequest(BaseModel):
     message: str
 
+@app.get("/")
+async def index_page(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
-# -----------------------------
-# Chat API
-# -----------------------------
 @app.post("/chat")
-async def chat_api(data: ChatRequest):
-    try:
-        reply = chat(data.message)
-
-        return JSONResponse({
-            "reply": reply
-        })
-
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={
-                "reply": f"Error: {str(e)}"
-            }
-        )
+async def chat_endpoint(data: ChatRequest):
+    reply = await agent.get_response(data.message)
+    return {"reply": reply}

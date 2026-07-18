@@ -1,15 +1,30 @@
-from pathlib import Path
+import os
+from agent.groq import get_groq_client
 
-from agent.groq import ask_groq
+class ChatAgent:
+    def __init__(self):
+        self.client = get_groq_client()
+        
+        # Load system instruction context dynamically
+        root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        system_prompt_path = os.path.join(root_dir, "prompts", "system.txt")
+        
+        if os.path.exists(system_prompt_path):
+            with open(system_prompt_path, "r", encoding="utf-8") as file:
+                self.system_prompt = file.read()
+        else:
+            self.system_prompt = "You are a helpful and intelligent AI assistant."
 
-
-PROMPT_PATH = Path("prompts/system.txt")
-
-
-def chat(message: str) -> str:
-
-    system_prompt = PROMPT_PATH.read_text(
-        encoding="utf-8"
-    )
-
-    return ask_groq(system_prompt, message)
+    async def get_response(self, user_message: str) -> str:
+        try:
+            # Call Groq API via standard non-blocking completion parsing
+            completion = self.client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": user_message}
+                ]
+            )
+            return completion.choices[0].message.content
+        except Exception as e:
+            return f"⚠️ Core System Connection Error: {str(e)}"

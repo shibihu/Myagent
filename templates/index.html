@@ -1,54 +1,33 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MyAgent</title>
-
     <link rel="stylesheet" href="/static/style.css">
-    <!-- GitHub Markdown Styling -->
+    <!-- GitHub Markdown Theme -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/github-markdown-css/github-markdown.min.css">
-    <!-- Highlight.js Code Theme -->
+    <!-- Highlight.js Code Highlighting Dark Theme -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
 </head>
-
 <body>
 
 <div class="container">
-
     <h1>🤖 MyAgent</h1>
-
     <div id="chat-box">
-
-        <div class="message ai">
+        <div class="message ai markdown-body">
             Hello! I'm MyAgent 👋
         </div>
-
     </div>
-
     <div class="input-area">
-
-        <input
-            id="message-input"
-            type="text"
-            placeholder="Type your message..."
-        >
-
-        <button id="send-button">
-            Send
-        </button>
-
+        <input id="message-input" type="text" placeholder="Type your message..." autocomplete="off">
+        <button id="send-button">Send</button>
     </div>
-
 </div>
 
-<!-- Markdown Parser & Syntax Highlighting Libraries -->
+<!-- Scripts Engine Pipeline -->
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
-
-<!-- Your Custom App Script -->
 <script src="/static/script.js"></script>
-
 </body>
-
 </html>
