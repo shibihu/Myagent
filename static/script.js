@@ -17,9 +17,8 @@ const searchWebToggle = document.getElementById("search-web-toggle");
 
 let currentChatId = null;
 let isTypingActive = false;
-let isWebSearchEnabled = false; // สถานะเก็บว่าสั่งให้บอทค้นหาเว็บสดๆ ไหม
+let isWebSearchEnabled = false;
 
-// เปิด-ปิดระบบทริกเกอร์ค้นหาเว็บสดๆ แบบ ChatGPT สลับสีกระพริบ
 searchWebToggle.onclick = () => {
     isWebSearchEnabled = !isWebSearchEnabled;
     searchWebToggle.classList.toggle("active", isWebSearchEnabled);
@@ -36,28 +35,25 @@ function toggleTyping(show) {
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-// ฟังก์ชันสร้างกลุ่มข้อความและประมวลผลข้อความไหลพรั่งพรูผ่าน Fetch Text Stream Decoder
 async function renderStreamingMessage(textBodyElement, streamResponse) {
     const reader = streamResponse.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let accumulatedText = "";
 
     isTypingActive = true;
+    textBodyElement.innerHTML = "";
+
     while (true) {
         const { value, done } = await reader.read();
         if (done) break;
         
-        // ถอดรหัสชิ้นส่วนคำที่ส่งตรงมาจาก Server หลังบ้านแบบเสี้ยววินาที
         const chunk = decoder.decode(value, { stream: true });
         accumulatedText += chunk;
         
-        // อัปเดตข้อความบนหน้าจอทันทีแบบพรั่งพรูไร้รอยต่อ
         textBodyElement.innerHTML = marked.parse(accumulatedText);
         chatBox.scrollTop = chatBox.scrollHeight;
     }
     isTypingActive = false;
-    
-    // หลังสตรีมจบ ค่อยทำการเรนเดอร์ปุ่ม Copy โค้ดและทำสัญลักษณ์ Highlight 
     setupMessageUtilities(textBodyElement);
 }
 
@@ -79,23 +75,57 @@ function createMessageLayout(role) {
     return textBody;
 }
 
+// 🛠️ เปลี่ยนปุ่มคัดลอกจากคำว่า "Copy" เป็นไอคอนรูปแผ่นกระดาษ/กล่องซ้อนสไตล์ Markdown จริง
 function setupMessageUtilities(textBody) {
     textBody.querySelectorAll("pre").forEach((preBlock) => {
+        const oldBtn = preBlock.querySelector(".copy-code-btn");
+        if (oldBtn) oldBtn.remove();
+
         const codeBlock = preBlock.querySelector("code");
         if (!codeBlock) return;
+
         const copyBtn = document.createElement("button");
         copyBtn.className = "copy-code-btn pop-btn";
-        copyBtn.textContent = "📋 Copy";
-        copyBtn.onclick = async () => {
+        copyBtn.setAttribute("type", "button");
+        copyBtn.title = "Copy code";
+
+        // ใส่ไอคอน SVG แผ่นกระดาษซ้อนกัน (Copy Icon) ลงไปตรงๆ
+        copyBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+        `;
+
+        copyBtn.onclick = async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
             try {
                 await navigator.clipboard.writeText(codeBlock.innerText);
-                copyBtn.textContent = "✅ Copied!";
-                setTimeout(() => copyBtn.textContent = "📋 Copy", 2000);
-            } catch (err) { copyBtn.textContent = "❌ Error"; }
+                // เมื่อก๊อปปี้สำเร็จ เปลี่ยนเป็นไอคอนติ๊กถูก (Check Icon) สั้นๆ 2 วินาที
+                copyBtn.innerHTML = `
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#10a37f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                `;
+                setTimeout(() => {
+                    copyBtn.innerHTML = `
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                    `;
+                }, 2000);
+            } catch (err) {
+                copyBtn.innerHTML = `<span>❌</span>`;
+            }
         };
         preBlock.appendChild(copyBtn);
     });
-    textBody.querySelectorAll("pre code").forEach((block) => { hljs.highlightElement(block); });
+
+    textBody.querySelectorAll("pre code").forEach((block) => { 
+        hljs.highlightElement(block); 
+    });
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 
@@ -117,7 +147,6 @@ async function renderStaticMessage(role, content, model = null, tokens = 0) {
 }
 
 
-// ฟังก์ชันส่งข้อความและเรียกใช้ตัวควบคุม Streaming + Web Search Payload
 async function sendMessage() {
     if (isTypingActive) return;
     const text = input.value.trim();
@@ -128,24 +157,21 @@ async function sendMessage() {
     toggleTyping(true);
 
     try {
-        // ยิงคำขอไปที่ backend โดยส่งค่าสถานะพารามิเตอร์การค้นหาเว็บสดๆ เข้าไปด้วย
         const response = await fetch("/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ 
                 message: text, 
                 chat_id: currentChatId,
-                search_web: isWebSearchEnabled // ผูกตัวแปรส่งเข้าหลังบ้านให้ไปหาข้อมูลผ่านบ็อทเสิร์ช
+                search_web: isWebSearchEnabled 
             })
         });
 
         toggleTyping(false);
         const aiTextBody = createMessageLayout("ai");
         
-        // สั่งเปิดระบบรับข้อมูลแบบสตรีมมิ่งทันทีเพื่อความเร็วระดับสูง
         await renderStreamingMessage(aiTextBody, response);
         
-        // คว้าไอดีห้องแชทล่าสุดจาก Response Header หรือสร้างระบบบันทึกประวัติหลังบ้านอัตโนมัติ
         const activeChatId = response.headers.get("X-Chat-ID");
         if (activeChatId) currentChatId = activeChatId;
         
@@ -156,15 +182,16 @@ async function sendMessage() {
     }
 }
 
-// 🛠️ ปรับเปลี่ยนหน้าตาปุ่มแก้ไข (✏️ SVG) และปุ่มลบ (🗑️ SVG) ใหม่ให้มินิมอลตามดีไซน์ ChatGPT จริง
 async function loadChatHistoryList() {
     try {
         const res = await fetch("/chats");
         const list = await res.json();
         historyList.innerHTML = "";
+        
         list.forEach(item => {
             const li = document.createElement("li");
             li.className = `history-item ${item.id === currentChatId ? 'active' : ''}`;
+            
             const textSpan = document.createElement("span");
             textSpan.className = "chat-link-text";
             textSpan.textContent = item.title;
@@ -173,14 +200,27 @@ async function loadChatHistoryList() {
             const actionsDiv = document.createElement("div");
             actionsDiv.className = "chat-actions";
             
-            // ไอคอนรูปดินสอและถังขยะแบบเวกเตอร์สไตล์ ChatGPT สวยงามคมชัดบนมือถือ
             actionsDiv.innerHTML = `
-                <button class="action-chat-btn rename-btn pop-btn" title="Rename"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg></button>
-                <button class="action-chat-btn delete-btn pop-btn" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>
+                <button class="action-chat-btn rename-btn pop-btn" title="Rename" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg></button>
+                <button class="action-chat-btn delete-btn pop-btn" title="Delete" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>
             `;
-            actionsDiv.querySelector(".rename-btn").onclick = (e) => { e.stopPropagation(); const t = prompt("ชื่อแชทใหม่:", item.title); if (t) renameChatSession(item.id, t.trim()); };
-            actionsDiv.querySelector(".delete-btn").onclick = (e) => { e.stopPropagation(); if (confirm(`ลบแชทนี้?`)) deleteChatSession(item.id); };
-            li.appendChild(textSpan); li.appendChild(actionsDiv); historyList.appendChild(li);
+            
+            actionsDiv.querySelector(".rename-btn").onclick = (e) => { 
+                e.preventDefault();
+                e.stopPropagation(); 
+                const t = prompt("ชื่อแชทใหม่:", item.title); 
+                if (t && t.trim() !== "") renameChatSession(item.id, t.trim()); 
+            };
+            
+            actionsDiv.querySelector(".delete-btn").onclick = (e) => { 
+                e.preventDefault();
+                e.stopPropagation(); 
+                if (confirm(`คุณต้องการลบห้องแชทนี้ใช่หรือไม่?`)) deleteChatSession(item.id); 
+            };
+            
+            li.appendChild(textSpan); 
+            li.appendChild(actionsDiv); 
+            historyList.appendChild(li);
         });
     } catch (err) { console.error(err); }
 }
