@@ -32,6 +32,18 @@ async function sendMessage() {
         ai.className = "message ai markdown-body";
         ai.innerHTML = marked.parse(data.reply);
 
+        // สร้างส่วนแสดงข้อมูลโมเดลและจำนวนโทเคนแนบเข้าไปท้ายข้อความ
+        const tokenBadge = document.createElement("div");
+        tokenBadge.style.fontSize = "11px";
+        tokenBadge.style.color = "#8b949e";
+        tokenBadge.style.marginTop = "10px";
+        tokenBadge.style.borderTop = "1px solid #30363d";
+        tokenBadge.style.paddingTop = "6px";
+        tokenBadge.style.display = "inline-block";
+        tokenBadge.style.fontFamily = "monospace";
+        tokenBadge.textContent = `🧠 Model: ${data.model} | 📊 Tokens Used: ${data.total_tokens}`;
+        ai.appendChild(tokenBadge);
+
         // Run styling highlighting explicitly inside the new block component
         ai.querySelectorAll("pre code").forEach((block) => {
             hljs.highlightElement(block);

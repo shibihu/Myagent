@@ -17,9 +17,13 @@ class ChatAgent:
         else:
             self.system_prompt = "You are a helpful and intelligent AI assistant."
 
-    async def get_response(self, user_message: str) -> str:
+    async def get_response(self, user_message: str) -> dict:
         if not self.is_configured:
-            return "⚠️ Groq API is not configured yet. Add your GROQ_API_KEY to the .env file or environment variables to enable AI replies."
+            return {
+                "reply": "⚠️ Groq API is not configured yet. Add your GROQ_API_KEY to the .env file or environment variables to enable AI replies.",
+                "model": "None",
+                "total_tokens": 0
+            }
 
         try:
             # Call Groq API via standard non-blocking completion parsing
@@ -30,6 +34,20 @@ class ChatAgent:
                     {"role": "user", "content": user_message},
                 ],
             )
-            return completion.choices[0].message.content
+            
+            # ดึงข้อมูลการใช้โทเคนและชื่อโมเดล
+            reply_text = completion.choices[0].message.content
+            model_used = completion.model
+            total_tokens = completion.usage.total_tokens if completion.usage else 0
+            
+            return {
+                "reply": reply_text,
+                "model": model_used,
+                "total_tokens": total_tokens
+            }
         except Exception as e:
-            return f"⚠️ Core System Connection Error: {str(e)}"
+            return {
+                "reply": f"⚠️ Core System Connection Error: {str(e)}",
+                "model": "Error",
+                "total_tokens": 0
+            }

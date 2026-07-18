@@ -29,5 +29,10 @@ async def index_page(request: Request):
 
 @app.post("/chat")
 async def chat_endpoint(data: ChatRequest):
-    reply = await agent.get_response(data.message)
-    return {"reply": reply}
+    # รับค่าที่เป็นโครงสร้างข้อมูลตัวใหม่ (dict)
+    result = await agent.get_response(data.message)
+    return {
+        "reply": result["reply"],
+        "model": result["model"],
+        "total_tokens": result["total_tokens"]
+    }
