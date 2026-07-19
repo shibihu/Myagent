@@ -70,7 +70,6 @@ async function simulateStreamingMessage(textBodyElement, fullText, model = null,
     textBodyElement.innerHTML = "";
 
     let currentText = "";
-    // Speed up typing for very long text by typing multiple characters at once
     const charsPerStep = Math.max(1, Math.floor(fullText.length / 300));
     const stepDelay = 15; // ms
 
@@ -84,7 +83,6 @@ async function simulateStreamingMessage(textBodyElement, fullText, model = null,
                 chatBox.scrollTop = chatBox.scrollHeight;
                 setTimeout(type, stepDelay);
             } else {
-                // Done typing, set final html and append badge
                 textBodyElement.innerHTML = marked.parse(fullText);
                 if (model) {
                     const badge = document.createElement("span");
@@ -119,7 +117,6 @@ function createMessageLayout(role) {
     return textBody;
 }
 
-// 🛠️ เปลี่ยนปุ่มคัดลอกจากคำว่า "Copy" เป็นไอคอนรูปแผ่นกระดาษ/กล่องซ้อนสไตล์ Markdown จริง
 function setupMessageUtilities(textBody) {
     textBody.querySelectorAll("pre").forEach((preBlock) => {
         const oldBtn = preBlock.querySelector(".copy-code-btn");
@@ -133,7 +130,6 @@ function setupMessageUtilities(textBody) {
         copyBtn.setAttribute("type", "button");
         copyBtn.title = "Copy code";
 
-        // ใส่ไอคอน SVG แผ่นกระดาษซ้อนกัน (Copy Icon) ลงไปตรงๆ
         copyBtn.innerHTML = `
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
@@ -146,7 +142,6 @@ function setupMessageUtilities(textBody) {
             e.stopPropagation();
             try {
                 await copyToClipboard(codeBlock.innerText);
-                // เมื่อก๊อปปี้สำเร็จ เปลี่ยนเป็นไอคอนติ๊กถูก (Check Icon) สั้นๆ 2 วินาที
                 copyBtn.innerHTML = `
                     <svg viewBox="0 0 24 24" fill="none" stroke="#10a37f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                         <polyline points="20 6 9 17 4 12"></polyline>
@@ -198,7 +193,6 @@ async function renderStaticMessage(role, content, model = null, tokens = 0) {
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-
 async function sendMessage() {
     if (isTypingActive) return;
     const text = input.value.trim();
@@ -240,6 +234,64 @@ async function sendMessage() {
     }
 }
 
+// Custom Popup Dialog Modals logic
+const customModalOverlay = document.getElementById("custom-modal-overlay");
+const modalTitle = document.getElementById("modal-title");
+const modalMessage = document.getElementById("modal-message");
+const modalInput = document.getElementById("modal-input");
+const modalCancelBtn = document.getElementById("modal-cancel-btn");
+const modalConfirmBtn = document.getElementById("modal-confirm-btn");
+
+let activeModalResolve = null;
+
+function showCustomPrompt(title, message, defaultValue = "") {
+    return new Promise((resolve) => {
+        modalTitle.textContent = title;
+        modalMessage.textContent = message;
+        modalInput.value = defaultValue;
+        modalInput.classList.remove("hidden");
+        modalCancelBtn.classList.remove("hidden");
+        customModalOverlay.classList.remove("hidden");
+        modalInput.focus();
+
+        activeModalResolve = (val) => {
+            customModalOverlay.classList.add("hidden");
+            resolve(val);
+        };
+    });
+}
+
+function showCustomConfirm(title, message) {
+    return new Promise((resolve) => {
+        modalTitle.textContent = title;
+        modalMessage.textContent = message;
+        modalInput.classList.add("hidden");
+        modalCancelBtn.classList.remove("hidden");
+        customModalOverlay.classList.remove("hidden");
+
+        activeModalResolve = (val) => {
+            customModalOverlay.classList.add("hidden");
+            resolve(val);
+        };
+    });
+}
+
+modalConfirmBtn.onclick = () => {
+    if (activeModalResolve) {
+        if (!modalInput.classList.contains("hidden")) {
+            activeModalResolve(modalInput.value);
+        } else {
+            activeModalResolve(true);
+        }
+    }
+};
+
+modalCancelBtn.onclick = () => {
+    if (activeModalResolve) {
+        activeModalResolve(null);
+    }
+};
+
 async function loadChatHistoryList() {
     try {
         const res = await fetch("/chats");
@@ -265,20 +317,20 @@ async function loadChatHistoryList() {
             const renameBtn = actionsDiv.querySelector(".rename-btn");
             const deleteBtn = actionsDiv.querySelector(".delete-btn");
 
-            const handleRename = (e) => {
+            const handleRename = async (e) => {
                 e.preventDefault();
                 e.stopPropagation(); 
-                const t = prompt("ชื่อแชทใหม่:", item.title); 
+                const t = await showCustomPrompt("ชื่อแชทใหม่:", "เปลี่ยนชื่อห้องแชทของคุณ:", item.title);
                 if (t && t.trim() !== "") renameChatSession(item.id, t.trim()); 
             };
 
-            const handleDelete = (e) => {
+            const handleDelete = async (e) => {
                 e.preventDefault();
                 e.stopPropagation(); 
-                if (confirm(`คุณต้องการลบห้องแชทนี้ใช่หรือไม่?`)) deleteChatSession(item.id); 
+                const isConfirmed = await showCustomConfirm("ลบแชท", `คุณต้องการลบห้องแชท "${item.title}" ใช่หรือไม่?`);
+                if (isConfirmed) deleteChatSession(item.id);
             };
 
-            // Setup click and touch event handlers to prevent propagation on mobile
             renameBtn.onclick = handleRename;
             renameBtn.ontouchstart = (e) => e.stopPropagation();
             renameBtn.ontouchend = handleRename;
@@ -313,7 +365,6 @@ input.onkeydown = (e) => { if (e.key === "Enter") sendMessage(); };
 // Tap anywhere in main container to automatically close the sidebar on mobile devices
 const dismissSidebarOnMobile = (e) => {
     if (window.innerWidth <= 768 && !sidebar.classList.contains("closed")) {
-        // Do not close if the click originated on the open button itself
         if (e.target.closest("#open-sidebar-btn")) return;
         sidebar.classList.add("closed");
         openSidebarBtn.classList.remove("hidden");
@@ -329,6 +380,133 @@ if (mainContainer) {
 if (window.innerWidth <= 768) {
     sidebar.classList.add("closed");
     openSidebarBtn.classList.remove("hidden");
+}
+
+// Tab Switcher logic
+const tabChat = document.getElementById("tab-chat");
+const tabIde = document.getElementById("tab-ide");
+const chatWorkspace = document.getElementById("chat-workspace");
+const ideWorkspace = document.getElementById("ide-workspace");
+
+if (tabChat && tabIde && chatWorkspace && ideWorkspace) {
+    tabChat.onclick = () => {
+        tabChat.classList.add("active");
+        tabIde.classList.remove("active");
+        chatWorkspace.classList.remove("hidden");
+        ideWorkspace.classList.add("hidden");
+    };
+    tabIde.onclick = () => {
+        tabIde.classList.add("active");
+        tabChat.classList.remove("active");
+        ideWorkspace.classList.remove("hidden");
+        chatWorkspace.classList.add("hidden");
+    };
+}
+
+// Cloud IDE Terminal Runner
+const terminalInput = document.getElementById("terminal-input");
+const terminalRunBtn = document.getElementById("terminal-run-btn");
+const terminalLog = document.getElementById("terminal-log");
+
+async function runTerminalCommand() {
+    const cmd = terminalInput.value.trim();
+    if (!cmd) return;
+
+    terminalLog.textContent += `\n$ ${cmd}\n`;
+    terminalInput.value = "";
+    terminalLog.scrollTop = terminalLog.scrollHeight;
+
+    try {
+        const response = await fetch("/ide/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ command: cmd })
+        });
+        const data = await response.json();
+        terminalLog.textContent += data.output || "No output returned.";
+    } catch (err) {
+        terminalLog.textContent += `Error executing command: ${err.message}\n`;
+    }
+    terminalLog.scrollTop = terminalLog.scrollHeight;
+}
+
+if (terminalRunBtn && terminalInput) {
+    terminalRunBtn.onclick = runTerminalCommand;
+    terminalInput.onkeydown = (e) => { if (e.key === "Enter") runTerminalCommand(); };
+}
+
+// Cloud IDE MCP Servers Connections
+const mcpRenderBtn = document.getElementById("mcp-render-btn");
+const mcpRobloxBtn = document.getElementById("mcp-roblox-btn");
+const mcpGithubBtn = document.getElementById("mcp-github-btn");
+
+async function toggleMCP(provider) {
+    const btn = document.getElementById(`mcp-${provider}-btn`);
+    const statusSpan = document.querySelector(`#mcp-${provider} .mcp-status`);
+    if (!btn || !statusSpan) return;
+
+    const isConnecting = btn.textContent === "Connect";
+
+    try {
+        const res = await fetch("/ide/mcp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ provider, active: isConnecting })
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+            if (isConnecting) {
+                btn.textContent = "Disconnect";
+                btn.classList.add("connected");
+                statusSpan.textContent = "Connected";
+                statusSpan.className = "mcp-status connected";
+            } else {
+                btn.textContent = "Connect";
+                btn.classList.remove("connected");
+                statusSpan.textContent = "Disconnected";
+                statusSpan.className = "mcp-status disconnected";
+            }
+        }
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+if (mcpRenderBtn) mcpRenderBtn.onclick = () => toggleMCP("render");
+if (mcpRobloxBtn) mcpRobloxBtn.onclick = () => toggleMCP("roblox");
+if (mcpGithubBtn) mcpGithubBtn.onclick = () => toggleMCP("github");
+
+// Git operations
+const gitCommitMsgInput = document.getElementById("git-commit-message");
+const gitPushBtn = document.getElementById("git-push-btn");
+
+if (gitPushBtn) {
+    gitPushBtn.onclick = async () => {
+        const msg = gitCommitMsgInput.value.trim();
+        if (!msg) {
+            await showCustomPrompt("🐙 Git Commit Message", "Please enter a commit message first:", "");
+            return;
+        }
+
+        gitPushBtn.textContent = "Pushing...";
+        gitPushBtn.disabled = true;
+
+        try {
+            const res = await fetch("/ide/git-push", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ commit_message: msg })
+            });
+            const data = await res.json();
+            await showCustomPrompt("🐙 Git Push Complete", "GitHub status response:", data.message || "Git operations completed.");
+            gitCommitMsgInput.value = "";
+        } catch (err) {
+            await showCustomPrompt("🐙 Git Error", "Git command failed:", err.message);
+        } finally {
+            gitPushBtn.textContent = "🚀 Commit & Push to GitHub";
+            gitPushBtn.disabled = false;
+        }
+    };
 }
 
 loadChatHistoryList();

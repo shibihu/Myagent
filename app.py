@@ -125,7 +125,70 @@ class ChatRequest(BaseModel):
 class RenameRequest(BaseModel):
     title: str
 
+class CommandRequest(BaseModel):
+    command: str
+
+class GitPushRequest(BaseModel):
+    commit_message: str
+
+class MCPRequest(BaseModel):
+    provider: str
+    active: bool
+
 # === API Endpoints ===
+import subprocess
+
+@app.post("/ide/run")
+async def run_terminal_command(data: CommandRequest):
+    cmd = data.command.strip()
+    if not cmd:
+        return {"output": ""}
+
+    forbidden_tokens = ["rm -rf /", "sudo", "mv /", "mkfs", "dd"]
+    if any(token in cmd for token in forbidden_tokens):
+        return {"output": "❌ Access Denied: This command is forbidden for security reasons."}
+
+    try:
+        process = await asyncio.create_subprocess_shell(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        output = stdout.decode("utf-8", errors="replace") + stderr.decode("utf-8", errors="replace")
+        return {"output": output if output else "Command completed with no standard output."}
+    except Exception as e:
+        return {"output": f"Error: {e}"}
+
+@app.post("/ide/git-push")
+async def git_push_workspace(data: GitPushRequest):
+    msg = data.commit_message.strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="Commit message is required")
+
+    try:
+        commands = [
+            ["git", "add", "."],
+            ["git", "commit", "-m", msg],
+            ["git", "push", "origin", "main"]
+        ]
+
+        outputs = []
+        for cmd in commands:
+            res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            outputs.append(f"$ {' '.join(cmd)}\nStdout: {res.stdout}\nStderr: {res.stderr}\n")
+
+        return {"status": "success", "message": "\n".join(outputs)}
+    except Exception as e:
+        return {"status": "error", "message": f"Git pushing failed: {e}"}
+
+mcp_states = {}
+
+@app.post("/ide/mcp")
+async def mcp_connection_manager(data: MCPRequest):
+    mcp_states[data.provider] = data.active
+    return {"status": "success", "provider": data.provider, "active": data.active}
+
 @app.get("/")
 async def index_page(request: Request):
     return templates.TemplateResponse(request=request, name="index.html", context={"request": request})
