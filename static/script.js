@@ -309,4 +309,26 @@ async function deleteMemoryFact(i) { await fetch(`/memory/${i}`, { method: "DELE
 newChatBtn.onclick = () => { if (!isTypingActive) { currentChatId = null; chatBox.innerHTML = ""; chatTitle.textContent = "ChatGPT 4o"; loadChatHistoryList(); } };
 button.onclick = sendMessage;
 input.onkeydown = (e) => { if (e.key === "Enter") sendMessage(); };
+
+// Tap anywhere in main container to automatically close the sidebar on mobile devices
+const dismissSidebarOnMobile = (e) => {
+    if (window.innerWidth <= 768 && !sidebar.classList.contains("closed")) {
+        // Do not close if the click originated on the open button itself
+        if (e.target.closest("#open-sidebar-btn")) return;
+        sidebar.classList.add("closed");
+        openSidebarBtn.classList.remove("hidden");
+    }
+};
+const mainContainer = document.getElementById("main-container");
+if (mainContainer) {
+    mainContainer.addEventListener("click", dismissSidebarOnMobile);
+    mainContainer.addEventListener("touchstart", dismissSidebarOnMobile, { passive: true });
+}
+
+// On mobile, start with the sidebar closed so the main chat is visible
+if (window.innerWidth <= 768) {
+    sidebar.classList.add("closed");
+    openSidebarBtn.classList.remove("hidden");
+}
+
 loadChatHistoryList();
