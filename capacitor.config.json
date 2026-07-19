@@ -1,5 +1,9 @@
 {
-  "appId": "com.shibihu.Myagent",
-  "appName": "# 3. เพิ่มระบบ Android เข้าไปในโปรเจกต์npm install @capacitor/androidnpx cap add android",
-  "webDir": "templates"
+  "appId": "com.tung.Myagent",
+  "appName": "Myagent",
+  "webDir": "templates",
+  "server": {
+    "url": "https://my-agent-bx0k75l5d-shibihus-projects.vercel.app/",
+    "cleartext": true
+  }
 }
