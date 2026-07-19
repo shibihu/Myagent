@@ -35,26 +35,70 @@ function toggleTyping(show) {
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-async function renderStreamingMessage(textBodyElement, streamResponse) {
-    const reader = streamResponse.body.getReader();
-    const decoder = new TextDecoder("utf-8");
-    let accumulatedText = "";
+function copyToClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text);
+    } else {
+        // Fallback using dummy element
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-999999px";
+        textArea.style.top = "-999999px";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        return new Promise((resolve, reject) => {
+            try {
+                const successful = document.execCommand('copy');
+                textArea.remove();
+                if (successful) {
+                    resolve();
+                } else {
+                    reject(new Error("Fallback copy failed"));
+                }
+            } catch (err) {
+                textArea.remove();
+                reject(err);
+            }
+        });
+    }
+}
 
+async function simulateStreamingMessage(textBodyElement, fullText, model = null, tokens = 0) {
     isTypingActive = true;
     textBodyElement.innerHTML = "";
 
-    while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        
-        const chunk = decoder.decode(value, { stream: true });
-        accumulatedText += chunk;
-        
-        textBodyElement.innerHTML = marked.parse(accumulatedText);
-        chatBox.scrollTop = chatBox.scrollHeight;
-    }
-    isTypingActive = false;
-    setupMessageUtilities(textBodyElement);
+    let currentText = "";
+    // Speed up typing for very long text by typing multiple characters at once
+    const charsPerStep = Math.max(1, Math.floor(fullText.length / 300));
+    const stepDelay = 15; // ms
+
+    let index = 0;
+    return new Promise((resolve) => {
+        function type() {
+            if (index < fullText.length) {
+                currentText += fullText.slice(index, index + charsPerStep);
+                index += charsPerStep;
+                textBodyElement.innerHTML = marked.parse(currentText);
+                chatBox.scrollTop = chatBox.scrollHeight;
+                setTimeout(type, stepDelay);
+            } else {
+                // Done typing, set final html and append badge
+                textBodyElement.innerHTML = marked.parse(fullText);
+                if (model) {
+                    const badge = document.createElement("span");
+                    badge.className = "info-badge";
+                    badge.textContent = `Model: ${model} | Tokens: ${tokens}`;
+                    textBodyElement.appendChild(badge);
+                }
+                setupMessageUtilities(textBodyElement);
+                isTypingActive = false;
+                resolve();
+            }
+        }
+        type();
+    });
 }
 
 function createMessageLayout(role) {
@@ -101,7 +145,7 @@ function setupMessageUtilities(textBody) {
             e.preventDefault();
             e.stopPropagation();
             try {
-                await navigator.clipboard.writeText(codeBlock.innerText);
+                await copyToClipboard(codeBlock.innerText);
                 // เมื่อก๊อปปี้สำเร็จ เปลี่ยนเป็นไอคอนติ๊กถูก (Check Icon) สั้นๆ 2 วินาที
                 copyBtn.innerHTML = `
                     <svg viewBox="0 0 24 24" fill="none" stroke="#10a37f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -118,6 +162,14 @@ function setupMessageUtilities(textBody) {
                 }, 2000);
             } catch (err) {
                 copyBtn.innerHTML = `<span>❌</span>`;
+                setTimeout(() => {
+                    copyBtn.innerHTML = `
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                    `;
+                }, 2000);
             }
         };
         preBlock.appendChild(copyBtn);
@@ -168,15 +220,21 @@ async function sendMessage() {
         });
 
         toggleTyping(false);
+        const data = await response.json();
+        
+        if (data.chat_id) {
+            currentChatId = data.chat_id;
+        }
+        if (data.title) {
+            chatTitle.textContent = data.title;
+        }
+        
         const aiTextBody = createMessageLayout("ai");
-        
-        await renderStreamingMessage(aiTextBody, response);
-        
-        const activeChatId = response.headers.get("X-Chat-ID");
-        if (activeChatId) currentChatId = activeChatId;
+        await simulateStreamingMessage(aiTextBody, data.reply, data.model, data.total_tokens);
         
         loadChatHistoryList();
     } catch (error) {
+        console.error(error);
         toggleTyping(false);
         renderStaticMessage("ai", "⚠️ Connection stream broke off or network timed out.");
     }
@@ -195,31 +253,48 @@ async function loadChatHistoryList() {
             const textSpan = document.createElement("span");
             textSpan.className = "chat-link-text";
             textSpan.textContent = item.title;
-            textSpan.onclick = () => { if (!isTypingActive) switchChatSession(item.id); };
             
             const actionsDiv = document.createElement("div");
             actionsDiv.className = "chat-actions";
             
             actionsDiv.innerHTML = `
                 <button class="action-chat-btn rename-btn pop-btn" title="Rename" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg></button>
-                <button class="action-chat-btn delete-btn pop-btn" title="Delete" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>
+                <button class="action-chat-btn delete-btn pop-btn" title="Delete" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg></button>
             `;
             
-            actionsDiv.querySelector(".rename-btn").onclick = (e) => { 
+            const renameBtn = actionsDiv.querySelector(".rename-btn");
+            const deleteBtn = actionsDiv.querySelector(".delete-btn");
+
+            const handleRename = (e) => {
                 e.preventDefault();
                 e.stopPropagation(); 
                 const t = prompt("ชื่อแชทใหม่:", item.title); 
                 if (t && t.trim() !== "") renameChatSession(item.id, t.trim()); 
             };
-            
-            actionsDiv.querySelector(".delete-btn").onclick = (e) => { 
+
+            const handleDelete = (e) => {
                 e.preventDefault();
                 e.stopPropagation(); 
                 if (confirm(`คุณต้องการลบห้องแชทนี้ใช่หรือไม่?`)) deleteChatSession(item.id); 
             };
+
+            // Setup click and touch event handlers to prevent propagation on mobile
+            renameBtn.onclick = handleRename;
+            renameBtn.ontouchstart = (e) => e.stopPropagation();
+            renameBtn.ontouchend = handleRename;
+
+            deleteBtn.onclick = handleDelete;
+            deleteBtn.ontouchstart = (e) => e.stopPropagation();
+            deleteBtn.ontouchend = handleDelete;
             
             li.appendChild(textSpan); 
             li.appendChild(actionsDiv); 
+
+            li.onclick = (e) => {
+                if (e.target.closest('.action-chat-btn')) return;
+                if (!isTypingActive) switchChatSession(item.id);
+            };
+
             historyList.appendChild(li);
         });
     } catch (err) { console.error(err); }
@@ -235,4 +310,3 @@ newChatBtn.onclick = () => { if (!isTypingActive) { currentChatId = null; chatBo
 button.onclick = sendMessage;
 input.onkeydown = (e) => { if (e.key === "Enter") sendMessage(); };
 loadChatHistoryList();
-

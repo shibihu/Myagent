@@ -115,3 +115,26 @@ button:focus, input:focus {
     pointer-events: none !important;
 }
 
+
+/* Improvement for touch targets on mobile devices under 768px */
+@media (max-width: 768px) {
+    .history-item {
+        padding: 12px 14px; /* Increase standard row target size on mobile */
+    }
+
+    .chat-actions {
+        display: flex !important; /* Always show rename and delete on mobile instead of relying on hover */
+        opacity: 0.8;
+    }
+
+    .action-chat-btn {
+        width: 38px !important;  /* Ensure tap target is at least 38-44px on mobile screens */
+        height: 38px !important;
+        padding: 8px !important;
+    }
+
+    .action-chat-btn svg {
+        width: 18px !important;
+        height: 18px !important;
+    }
+}
