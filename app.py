@@ -11,8 +11,25 @@ from pydantic import BaseModel
 from agent.agent import ChatAgent
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE = os.path.join(BASE_DIR, "chats.json")
-MEMORY_FILE = os.path.join(BASE_DIR, "memory.json")
+
+def get_file_path(filename: str) -> str:
+    # If running on Vercel or AWS Lambda, always use /tmp
+    if os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+        return os.path.join("/tmp", filename)
+    
+    # Try writing to the local folder; if that fails or is read-only, fallback to /tmp
+    local_path = os.path.join(BASE_DIR, filename)
+    try:
+        test_path = local_path + ".test"
+        with open(test_path, "w", encoding="utf-8") as f:
+            f.write("test")
+        os.remove(test_path)
+        return local_path
+    except Exception:
+        return os.path.join("/tmp", filename)
+
+DATA_FILE = get_file_path("chats.json")
+MEMORY_FILE = get_file_path("memory.json")
 
 app = FastAPI()
 

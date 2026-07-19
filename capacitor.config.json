@@ -1,0 +1,5 @@
+{
+  "appId": "com.shibihu.Myagent",
+  "appName": "# 3. เพิ่มระบบ Android เข้าไปในโปรเจกต์npm install @capacitor/androidnpx cap add android",
+  "webDir": "templates"
+}
