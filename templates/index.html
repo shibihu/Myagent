@@ -34,53 +34,115 @@
                 <button id="open-sidebar-btn" class="icon-btn pop-btn hidden" title="Open sidebar">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
                 </button>
-                <div id="chat-title">ChatGPT 4o</div>
+                <div class="tab-switcher">
+                    <button id="tab-chat" class="tab-btn active">💬 Chat</button>
+                    <button id="tab-ide" class="tab-btn">⚡ Cloud IDE</button>
+                </div>
             </div>
-            <button id="toggle-memory-btn" class="pop-btn" title="Memory Context">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; display: inline-block; vertical-align: text-bottom; margin-right: 6px;">
-                    <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
-                    <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
-                    <path d="M12 5v13"/>
-                </svg>Memory Context
-            </button>
+            <button id="toggle-memory-btn" class="pop-btn">🧠 Memory Context</button>
         </div>
         
-        <div id="chat-box-wrapper">
-            <div id="chat-box"></div>
-            <div id="typing-indicator" class="typing-indicator hidden">
-                <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+        <!-- Chat Workspace -->
+        <div id="chat-workspace" class="workspace-panel">
+            <div id="chat-box-wrapper">
+                <div id="chat-box"></div>
+                <div id="typing-indicator" class="typing-indicator hidden">
+                    <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+                </div>
+            </div>
+
+            <!-- กล่องอินพุตพร้อมปุ่มเปิด/ปิดระบบค้นหาเว็บสดๆ -->
+            <div class="input-container">
+                <div class="input-wrapper">
+                    <button id="search-web-toggle" class="pop-btn" title="Toggle Web Search">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                        <span>Search</span>
+                    </button>
+                    <input type="text" id="message-input" placeholder="Message MyAgent..." autocomplete="off">
+                    <button id="send-button" class="pop-btn" title="Send message">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+                    </button>
+                </div>
+                <div class="footer-note">MyAgent can make mistakes. Verify important info.</div>
             </div>
         </div>
 
-        <!-- กล่องอินพุตพร้อมปุ่มเปิด/ปิดระบบค้นหาเว็บสดๆ -->
-        <div class="input-container">
-            <div class="input-wrapper">
-                <button id="search-web-toggle" class="pop-btn" title="Toggle Web Search">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-                    <span>Search</span>
-                </button>
-                <input type="text" id="message-input" placeholder="Message MyAgent..." autocomplete="off">
-                <button id="send-button" class="pop-btn" title="Send message">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
-                </button>
+        <!-- Cloud IDE Workspace -->
+        <div id="ide-workspace" class="workspace-panel hidden">
+            <div class="ide-container">
+                <div class="ide-section mcp-section">
+                    <h3>🔌 MCP Servers</h3>
+                    <p class="section-desc">Connect and orchestrate your cloud and development API integrations.</p>
+                    <div class="mcp-grid">
+                        <div class="mcp-card" id="mcp-render">
+                            <div class="mcp-card-header">
+                                <span class="mcp-name">Render API</span>
+                                <span class="mcp-status disconnected">Disconnected</span>
+                            </div>
+                            <button class="mcp-btn pop-btn" id="mcp-render-btn">Connect</button>
+                        </div>
+                        <div class="mcp-card" id="mcp-roblox">
+                            <div class="mcp-card-header">
+                                <span class="mcp-name">Roblox OpenCloud</span>
+                                <span class="mcp-status disconnected">Disconnected</span>
+                            </div>
+                            <button class="mcp-btn pop-btn" id="mcp-roblox-btn">Connect</button>
+                        </div>
+                        <div class="mcp-card" id="mcp-github">
+                            <div class="mcp-card-header">
+                                <span class="mcp-name">GitHub MCP</span>
+                                <span class="mcp-status disconnected">Disconnected</span>
+                            </div>
+                            <button class="mcp-btn pop-btn" id="mcp-github-btn">Connect</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ide-section terminal-section">
+                    <h3>💻 Interactive Terminal</h3>
+                    <p class="section-desc">Execute scripts, install packages, and manage your cloud workspace live.</p>
+                    <div class="terminal-box">
+                        <div class="terminal-output" id="terminal-log">MyAgent Cloud IDE Terminal Shell v1.0.0
+Ready for commands...
+</div>
+                        <div class="terminal-input-row">
+                            <span class="terminal-prompt">$</span>
+                            <input type="text" id="terminal-input" placeholder="npm start, python test.py, git status..." autocomplete="off">
+                            <button id="terminal-run-btn" class="pop-btn">Run</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ide-section git-section">
+                    <h3>🐙 Git Operations (Commit & Push)</h3>
+                    <p class="section-desc">Instantly push your latest cloud workspace changes to your GitHub branch.</p>
+                    <div class="git-box">
+                        <input type="text" id="git-commit-message" placeholder="Commit message (e.g., Fix chat styling bugs)" autocomplete="off">
+                        <button id="git-push-btn" class="pop-btn">🚀 Commit & Push to GitHub</button>
+                    </div>
+                </div>
             </div>
-            <div class="footer-note">MyAgent can make mistakes. Verify important info.</div>
         </div>
     </div>
 
     <div id="memory-drawer" class="closed">
-        <div class="memory-header">
-            <span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; display: inline-block; vertical-align: text-bottom; margin-right: 6px;">
-                    <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
-                    <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
-                    <path d="M12 5v13"/>
-                </svg>Long-term Memory
-            </span>
-            <button id="close-memory-btn" class="pop-btn">✕</button>
-        </div>
+        <div class="memory-header"><span>🧠 Long-term Memory</span><button id="close-memory-btn" class="pop-btn">✕</button></div>
         <ul id="memory-list"></ul>
     </div>
+
+    <!-- Custom Dialog Modals -->
+    <div id="custom-modal-overlay" class="modal-overlay hidden">
+        <div class="modal-container">
+            <h3 id="modal-title">Dialog</h3>
+            <p id="modal-message"></p>
+            <input type="text" id="modal-input" class="hidden" autocomplete="off">
+            <div class="modal-actions">
+                <button id="modal-cancel-btn" class="pop-btn secondary-btn">Cancel</button>
+                <button id="modal-confirm-btn" class="pop-btn primary-btn">OK</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/script.js"></script>
 </body>
 </html>
