@@ -3,12 +3,14 @@ import re
 import uuid
 import json
 import asyncio
-from typing import Optional
-from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
+from typing import Optional, List
+import io
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Form, File, UploadFile
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from agent.agent import ChatAgent
+from pypdf import PdfReader
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -174,43 +176,125 @@ async def get_chat_history(chat_id: str):
     return {"title": "New Chat", "messages": []}
 
 @app.post("/chat")
-async def chat_endpoint(data: ChatRequest, background_tasks: BackgroundTasks):
+async def chat_endpoint(
+    request: Request,
+    background_tasks: BackgroundTasks
+):
     data_lock = get_file_lock(DATA_FILE)
     memory_lock = get_file_lock(MEMORY_FILE)
     
+    content_type = request.headers.get("content-type", "")
+
+    message = ""
+    chat_id = None
+    search_web = False
+    files_to_process = []
+
+    if "multipart/form-data" in content_type:
+        form_data = await request.form()
+        message = form_data.get("message", "")
+        chat_id = form_data.get("chat_id")
+        search_web_val = form_data.get("search_web", "false")
+        search_web = search_web_val.lower() == "true"
+
+        # Get list of uploaded files
+        files_to_process = form_data.getlist("files")
+    else:
+        # Default to application/json
+        try:
+            json_data = await request.json()
+            message = json_data.get("message", "")
+            chat_id = json_data.get("chat_id")
+            search_web = json_data.get("search_web", False)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON or request payload")
+
+    # Read and parse attached files
+    files_context = ""
+    for file in files_to_process:
+        filename = file.filename
+        if not filename:
+            continue
+
+        content_bytes = await file.read()
+        if not content_bytes:
+            continue
+
+        ext = os.path.splitext(filename)[1].lower()
+
+        if ext == ".txt":
+            try:
+                text_data = content_bytes.decode("utf-8", errors="ignore")
+                files_context += f"\n--- Start of File: {filename} ---\n{text_data}\n--- End of File: {filename} ---\n"
+            except Exception as e:
+                files_context += f"\n[Error parsing TXT File {filename}: {str(e)}]\n"
+        elif ext == ".pdf":
+            try:
+                pdf_file = io.BytesIO(content_bytes)
+                reader = PdfReader(pdf_file)
+                pdf_text = ""
+                for page in reader.pages:
+                    t = page.extract_text()
+                    if t:
+                        pdf_text += t + "\n"
+                files_context += f"\n--- Start of PDF File: {filename} ---\n{pdf_text}\n--- End of PDF File: {filename} ---\n"
+            except Exception as e:
+                files_context += f"\n[Error parsing PDF File {filename}: {str(e)}]\n"
+        elif ext in [".jpg", ".jpeg", ".png"]:
+            size_kb = len(content_bytes) / 1024
+            files_context += f"\n[Attached Image File: {filename} (Size: {size_kb:.2f} KB)]\n"
+        else:
+            files_context += f"\n[Attached File: {filename} (Size: {len(content_bytes)} bytes)]\n"
+
     async with memory_lock:
         memories = load_json_file(MEMORY_FILE)
     
     async with data_lock:
         chat_sessions = load_json_file(DATA_FILE)
-        cid = data.chat_id
+        cid = chat_id
         if not cid or cid not in chat_sessions:
             cid = str(uuid.uuid4())
-            title = data.message[:15] + "..." if len(data.message) > 15 else data.message
+            t_msg = message if message else (files_to_process[0].filename if files_to_process else "New Chat")
+            title = t_msg[:15] + "..." if len(t_msg) > 15 else t_msg
             chat_sessions[cid] = {"title": title, "messages": []}
             
+        # Construct the user display message for saving in chat history
+        display_message = message
+        if files_to_process:
+            file_names = ", ".join([f"📎 {f.filename}" for f in files_to_process if f.filename])
+            if display_message:
+                display_message += f"\n\n({file_names})"
+            else:
+                display_message = file_names
+
         chat_sessions[cid]["messages"].append({
             "role": "user", 
-            "content": data.message, 
+            "content": display_message,
             "model": None,
             "total_tokens": 0
         })
         # บันทึกสถานะชั่วคราวขณะรอการตอบกลับจาก AI เพื่อกันข้อมูลสูญหาย
         save_json_file(DATA_FILE, chat_sessions)
 
+    # Combine message and files_context to send to agent
+    agent_message = message
+    if files_context:
+        agent_message = f"{files_context}\n\nUser Message: {message}"
+
     # ฉีดประวัติความจำดั้งเดิมเข้าไปประกบ System Context
-    injected_message = data.message
+    injected_message = agent_message
     facts = memories.get("facts", [])
     if facts:
         memory_context = "\n".join([f"- {f}" for f in facts])
-        injected_message = f"[ข้อมูลความจำถาวรเกี่ยวกับผู้ใช้:\n{memory_context}]\n\nคำสั่งปัจจุบัน: {data.message}"
+        injected_message = f"[ข้อมูลความจำถาวรเกี่ยวกับผู้ใช้:\n{memory_context}]\n\nคำสั่งปัจจุบัน: {agent_message}"
     
     result = await agent.get_response(injected_message)
     
     async with data_lock:
         chat_sessions = load_json_file(DATA_FILE)
         if cid not in chat_sessions:
-            title = data.message[:15] + "..." if len(data.message) > 15 else data.message
+            t_msg = message if message else (files_to_process[0].filename if files_to_process else "New Chat")
+            title = t_msg[:15] + "..." if len(t_msg) > 15 else t_msg
             chat_sessions[cid] = {"title": title, "messages": []}
             
         chat_sessions[cid]["messages"].append({
@@ -222,7 +306,7 @@ async def chat_endpoint(data: ChatRequest, background_tasks: BackgroundTasks):
         save_json_file(DATA_FILE, chat_sessions)
     
     # ส่งงานไปวิเคราะห์ความจำเงียบๆ หลังบ้าน โดยไม่ทำให้หน้าเว็บกระตุก
-    background_tasks.add_task(extract_and_save_memory, data.message, result["reply"])
+    background_tasks.add_task(extract_and_save_memory, message, result["reply"])
     
     return {
         "chat_id": cid,

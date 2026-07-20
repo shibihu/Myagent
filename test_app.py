@@ -19,6 +19,22 @@ class AppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("reply", response.json())
 
+    def test_chat_endpoint_with_multipart_files(self):
+        # Test sending form data along with multiple file attachments
+        response = self.client.post(
+            "/chat",
+            data={"message": "What is in these files?", "search_web": "false"},
+            files=[
+                ("files", ("test.txt", b"Hello, this is a plain text file content.", "text/plain")),
+                ("files", ("test.png", b"fake_png_bytes", "image/png"))
+            ]
+        )
+        self.assertEqual(response.status_code, 200)
+        json_data = response.json()
+        self.assertIn("reply", json_data)
+        self.assertIn("chat_id", json_data)
+        self.assertIn("title", json_data)
+
     def test_app_starts_without_groq_key(self):
         with patch.dict(os.environ, {"GROQ_API_KEY": ""}, clear=False):
             import config

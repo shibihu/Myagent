@@ -1,0 +1,17 @@
+INFO:     Started server process [78841]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:45736 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+INFO:     127.0.0.1:40686 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40686 - "GET /static/style.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40694 - "GET /static/script.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40694 - "GET /chats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40694 - "POST /chat HTTP/1.1" 200 OK
+[Memory System Block Saved]: ['ผู้ใช้ชอบทดสอบฟังก์ชัน Multi-modal & File Upload ใน MyAgent', 'ผู้ใช้กำลังวิเคราะห์ไฟล์ข้อความและรูปภาพที่แนบมา']
+INFO:     127.0.0.1:46968 - "GET /chats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52732 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52732 - "GET /static/style.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52738 - "GET /static/script.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52738 - "GET /chats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52738 - "POST /chat HTTP/1.1" 200 OK
