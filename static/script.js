@@ -44,9 +44,103 @@ const memoryList = document.getElementById("memory-list");
 const typingIndicator = document.getElementById("typing-indicator");
 const searchWebToggle = document.getElementById("search-web-toggle");
 
+// Elements for File Upload
+const attachmentBtn = document.getElementById("attachment-btn");
+const fileInput = document.getElementById("file-input");
+const filePreviewBar = document.getElementById("file-preview-bar");
+
 let currentChatId = null;
 let isTypingActive = false;
 let isWebSearchEnabled = false;
+let selectedFiles = [];
+
+// Trigger file input click when attachment button is clicked
+if (attachmentBtn && fileInput) {
+    attachmentBtn.onclick = (e) => {
+        e.preventDefault();
+        fileInput.click();
+    };
+}
+
+// Handle selected files
+if (fileInput) {
+    fileInput.onchange = (e) => {
+        const files = Array.from(e.target.files);
+        // Concatenate new files to the existing selected files
+        files.forEach(file => {
+            // Prevent exact duplicates by checking name and size
+            if (!selectedFiles.some(f => f.name === file.name && f.size === file.size)) {
+                selectedFiles.push(file);
+            }
+        });
+        // Reset file input value so same file can be selected again
+        fileInput.value = "";
+        renderFilePreviews();
+    };
+}
+
+// Function to render preview of attached files
+function renderFilePreviews() {
+    if (!filePreviewBar) return;
+    filePreviewBar.innerHTML = "";
+
+    if (selectedFiles.length === 0) {
+        filePreviewBar.classList.add("hidden");
+        return;
+    }
+
+    filePreviewBar.classList.remove("hidden");
+
+    selectedFiles.forEach((file, index) => {
+        const previewItem = document.createElement("div");
+        previewItem.className = "preview-item";
+
+        // Remove button (X)
+        const removeBtn = document.createElement("button");
+        removeBtn.className = "preview-item-remove";
+        removeBtn.innerHTML = "✕";
+        removeBtn.type = "button";
+        removeBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            selectedFiles.splice(index, 1);
+            renderFilePreviews();
+        };
+
+        // File thumbnail / icon depending on file type
+        if (file.type.startsWith("image/")) {
+            const img = document.createElement("img");
+            img.alt = file.name;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+            previewItem.appendChild(img);
+        } else {
+            // Document preview (txt or pdf)
+            const docDiv = document.createElement("div");
+            docDiv.className = "preview-item-doc";
+            
+            const ext = file.name.split('.').pop().toUpperCase();
+            
+            docDiv.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                    <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+                <span>${ext}</span>
+            `;
+            previewItem.appendChild(docDiv);
+        }
+
+        previewItem.appendChild(removeBtn);
+        filePreviewBar.appendChild(previewItem);
+    });
+}
 
 searchWebToggle.onclick = () => {
     isWebSearchEnabled = !isWebSearchEnabled;
@@ -231,21 +325,45 @@ async function renderStaticMessage(role, content, model = null, tokens = 0) {
 async function sendMessage() {
     if (isTypingActive) return;
     const text = input.value.trim();
-    if (text === "") return;
+    if (text === "" && selectedFiles.length === 0) return;
 
-    renderStaticMessage("user", text);
+    // Build the user message to display, including attachments if present
+    let userDisplayMessage = text;
+    if (selectedFiles.length > 0) {
+        const fileNames = selectedFiles.map(f => `📎 ${f.name}`).join(", ");
+        if (userDisplayMessage !== "") {
+            userDisplayMessage += `\n\n(${fileNames})`;
+        } else {
+            userDisplayMessage = fileNames;
+        }
+    }
+
+    renderStaticMessage("user", userDisplayMessage);
+    
+    // Construct FormData to send text and files to the backend
+    const formData = new FormData();
+    formData.append("message", text);
+    if (currentChatId) {
+        formData.append("chat_id", currentChatId);
+    }
+    formData.append("search_web", isWebSearchEnabled ? "true" : "false");
+    
+    selectedFiles.forEach(file => {
+        formData.append("files", file);
+    });
+
+    // Clear input field and selected files preview immediately to prevent double sending
     input.value = "";
+    const filesSent = [...selectedFiles];
+    selectedFiles = [];
+    renderFilePreviews();
+
     toggleTyping(true);
 
     try {
         const response = await fetch("/chat", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ 
-                message: text, 
-                chat_id: currentChatId,
-                search_web: isWebSearchEnabled 
-            })
+            body: formData
         });
 
         toggleTyping(false);
@@ -266,6 +384,11 @@ async function sendMessage() {
         console.error(error);
         toggleTyping(false);
         renderStaticMessage("ai", "⚠️ Connection stream broke off or network timed out.");
+        // If it failed, restore files in the list so the user can retry
+        if (filesSent.length > 0 && selectedFiles.length === 0) {
+            selectedFiles = filesSent;
+            renderFilePreviews();
+        }
     }
 }
 
