@@ -43,7 +43,7 @@ class ChatAgent:
         # --- ลำดับที่ 2: สลับไปใช้ Google Gemini อัตโนมัติ ---
         if self.gemini_key and "คีย์_" not in self.gemini_key:
             try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.gemini_key}"
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.gemini_key}"
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.post(
                         url,
@@ -57,7 +57,7 @@ class ChatAgent:
                         reply_text = result['candidates'][0]['content']['parts'][0]['text']
                         return {
                             "reply": reply_text,
-                            "model": "Google Gemini 1.5 Flash",
+                            "model": "Google Gemini 2.5 Flash",
                             "total_tokens": 0
                         }
                     else:
@@ -104,7 +104,7 @@ class ChatAgent:
                             "Content-Type": "application/json"
                         },
                         json={
-                            "model": "openrouter/auto-free", # สุ่มเลือกโมเดลฟรีที่เจ๋งที่สุดตอนนั้นมาตอบให้เลย
+                            "model": "openrouter/free", # สุ่มเลือกโมเดลฟรีที่เจ๋งที่สุดตอนนั้นมาตอบให้เลย
                             "messages": [{"role": "user", "content": prompt}],
                             "temperature": 0.7
                         }
@@ -113,7 +113,7 @@ class ChatAgent:
                         result = response.json()
                         return {
                             "reply": result["choices"][0]["message"]["content"],
-                            "model": "OpenRouter (Auto-Free)",
+                            "model": "OpenRouter (Free Auto)",
                             "total_tokens": result.get("usage", {}).get("total_tokens", 0)
                         }
             except Exception as e:
