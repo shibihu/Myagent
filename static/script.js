@@ -1,3 +1,32 @@
+// Register GDScript language for highlight.js to enable Godot script syntax highlighting
+if (typeof hljs !== 'undefined') {
+    hljs.registerLanguage("gdscript", function() {
+        "use strict";
+        return {
+            aliases: ["godot", "gdscript"],
+            keywords: {
+                keyword: "and in not or self void as assert breakpoint class class_name extends is func setget signal tool yield const enum export onready static var remote sync master puppet remotesync mastersync puppetsync Color8 ColorN abs asin assert atan atan2 bytes2var cartesian2polar ceil char clamp convert cos cosh db2linear decimals dectime deg2rad dict2inst ease exp floor fmod fposmod funcref get_stack hash inst2dict instance_from_id inverse_lerp is_equal_approx is_inf is_instance_valid is_nan is_zero_approx len lerp lerp_angle linear2db load log max min move_toward nearest_po2 ord parse_json polar2cartesian posmod pow preload print print_debug print_stack printerr printraw prints printt push_error push_warning rad2deg rand_range rand_seed randf randi randomize range range_lerp round seed sign sin sinh smoothstep sqrt step_decimals stepify str str2var tan tanh to_json type_exists typeof validate_json var2bytes var2str weakref wrapf wrapi yield PI TAU INF NAN int float true false null",
+                control_flow_keyword: "if elif else for match break continue while pass return",
+                base_type: "String Array Dictionary Vector2 Vector3 Rect2 PoolByteArray PoolColorArray PoolIntArray PoolRealArray PoolStringArray PoolVector2Array PoolVector3Array"
+            },
+            contains: [
+                { className: "number", begin: hljs.C_NUMBER_RE },
+                hljs.HASH_COMMENT_MODE,
+                { className: "comment", begin: /"""/, end: /"""/ },
+                hljs.QUOTE_STRING_MODE,
+                {
+                    variants: [
+                        { className: "function", beginKeywords: "func" },
+                        { className: "class", beginKeywords: "class" }
+                    ],
+                    end: /\w*(?=[?()]{2,})/,
+                    contains: [hljs.UNDERSCORE_TITLE_MODE]
+                }
+            ]
+        };
+    });
+}
+
 const input = document.getElementById("message-input");
 const button = document.getElementById("send-button");
 const chatBox = document.getElementById("chat-box");
@@ -240,6 +269,65 @@ async function sendMessage() {
     }
 }
 
+// Helper to display a custom gorgeous dark GUI Modal replacing native alert/confirm/prompt
+function showCustomModal({ title, message, showInput = false, defaultValue = "", okText = "OK", cancelText = "Cancel" }) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById("custom-modal");
+        const modalTitle = document.getElementById("modal-title");
+        const modalMessage = document.getElementById("modal-message");
+        const modalInput = document.getElementById("modal-input");
+        const okBtn = document.getElementById("modal-ok-btn");
+        const cancelBtn = document.getElementById("modal-cancel-btn");
+        const closeBtn = document.getElementById("modal-close-btn");
+
+        modalTitle.textContent = title || "MyAgent AI";
+        modalMessage.textContent = message || "";
+
+        if (showInput) {
+            modalInput.classList.remove("hidden");
+            modalInput.value = defaultValue;
+            // Delay focus slightly to guarantee modal rendering
+            setTimeout(() => modalInput.focus(), 50);
+        } else {
+            modalInput.classList.add("hidden");
+            modalInput.value = "";
+        }
+
+        okBtn.textContent = okText;
+        cancelBtn.textContent = cancelText;
+
+        modal.classList.remove("hidden");
+
+        const cleanupAndResolve = (value) => {
+            modal.classList.add("hidden");
+            okBtn.onclick = null;
+            cancelBtn.onclick = null;
+            closeBtn.onclick = null;
+            modalInput.onkeydown = null;
+            resolve(value);
+        };
+
+        okBtn.onclick = () => {
+            if (showInput) {
+                cleanupAndResolve(modalInput.value.trim());
+            } else {
+                cleanupAndResolve(true);
+            }
+        };
+
+        cancelBtn.onclick = () => cleanupAndResolve(showInput ? null : false);
+        closeBtn.onclick = () => cleanupAndResolve(showInput ? null : false);
+
+        modalInput.onkeydown = (e) => {
+            if (e.key === "Enter") {
+                okBtn.click();
+            } else if (e.key === "Escape") {
+                cancelBtn.click();
+            }
+        };
+    });
+}
+
 async function loadChatHistoryList() {
     try {
         const res = await fetch("/chats");
@@ -265,17 +353,30 @@ async function loadChatHistoryList() {
             const renameBtn = actionsDiv.querySelector(".rename-btn");
             const deleteBtn = actionsDiv.querySelector(".delete-btn");
 
-            const handleRename = (e) => {
+            const handleRename = async (e) => {
                 e.preventDefault();
                 e.stopPropagation(); 
-                const t = prompt("ชื่อแชทใหม่:", item.title); 
+                const t = await showCustomModal({
+                    title: "แก้ไขชื่อห้องแชท",
+                    message: "กรุณาระบุชื่อแชทใหม่:",
+                    showInput: true,
+                    defaultValue: item.title,
+                    okText: "บันทึก",
+                    cancelText: "ยกเลิก"
+                });
                 if (t && t.trim() !== "") renameChatSession(item.id, t.trim()); 
             };
 
-            const handleDelete = (e) => {
+            const handleDelete = async (e) => {
                 e.preventDefault();
                 e.stopPropagation(); 
-                if (confirm(`คุณต้องการลบห้องแชทนี้ใช่หรือไม่?`)) deleteChatSession(item.id); 
+                const confirmDelete = await showCustomModal({
+                    title: "ลบห้องแชท",
+                    message: `คุณต้องการลบห้องแชท "${item.title}" นี้ใช่หรือไม่?`,
+                    okText: "ลบ",
+                    cancelText: "ยกเลิก"
+                });
+                if (confirmDelete) deleteChatSession(item.id);
             };
 
             // Setup click and touch event handlers to prevent propagation on mobile

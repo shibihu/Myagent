@@ -81,6 +81,25 @@
         </div>
         <ul id="memory-list"></ul>
     </div>
+
+    <!-- Gorgeous custom GUI Modal Overlay replacement for native prompt/confirm -->
+    <div id="custom-modal" class="modal-overlay hidden">
+        <div class="modal-container pop-btn">
+            <div class="modal-header">
+                <span id="modal-title">MyAgent AI</span>
+                <button id="modal-close-btn" class="pop-btn">✕</button>
+            </div>
+            <div class="modal-body">
+                <p id="modal-message"></p>
+                <input type="text" id="modal-input" class="hidden" autocomplete="off">
+            </div>
+            <div class="modal-footer">
+                <button id="modal-cancel-btn" class="pop-btn secondary-btn">Cancel</button>
+                <button id="modal-ok-btn" class="pop-btn primary-btn">OK</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/script.js"></script>
 </body>
 </html>
