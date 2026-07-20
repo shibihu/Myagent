@@ -5,12 +5,20 @@ import json
 import asyncio
 from typing import Optional, List
 import io
-from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Form, File, UploadFile
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Form, File, UploadFile, Header, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from agent.agent import ChatAgent
+from agent.ide_agent import IDEAgent
 from pypdf import PdfReader
+
+# Import tools for direct API endpoint access
+from agent.tools import (
+    read_file_tool, patch_file_tool, view_dir_tool,
+    execute_command_tool, clone_repository_tool,
+    git_status_tool, git_rollback_tool
+)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -33,15 +41,23 @@ def get_file_path(filename: str) -> str:
 DATA_FILE = get_file_path("chats.json")
 MEMORY_FILE = get_file_path("memory.json")
 
+# Security configuration
+API_SECRET_TOKEN = os.environ.get("API_SECRET_TOKEN", "super-secret-ide-agent-token-123")
+
+async def verify_api_token(x_api_token: Optional[str] = Header(None, alias="X-API-Token")):
+    """Verifies that the incoming request has the correct secret token to secure Koyeb endpoints."""
+    if not x_api_token or x_api_token != API_SECRET_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden: Invalid or missing API security token.")
+
 app = FastAPI()
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 agent = ChatAgent()
+ide_agent = IDEAgent()
 
 # === ฟังก์ชันจัดการไฟล์ JSON และการควบคุมความสอดคล้องกันของข้อมูล (Concurrency Safe) ===
-# เราใช้ locks แยกเฉพาะสำหรับแต่ละไฟล์เพื่อป้องกันสภาวะการแย่งชิงข้อมูล (Race conditions) ระหว่างการเขียน/อ่านไฟล์แบบไม่ซิงค์
 file_locks = {}
 
 def get_file_lock(filepath: str) -> asyncio.Lock:
@@ -59,26 +75,22 @@ def load_json_file(filepath: str) -> dict:
     return {}
 
 def save_json_file(filepath: str, data: dict) -> None:
-    # ใช้วิธีการเขียนแบบ Atomic (เขียนลงไฟล์ชั่วคราวก่อนแล้วสลับชื่อไฟล์) เพื่อป้องกันไฟล์เสียหายเมื่อเกิดข้อผิดพลาดระหว่างเขียน
     temp_filepath = filepath + ".tmp"
     try:
         with open(temp_filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
-        # ตรวจสอบว่าเขียนไฟล์ชั่วคราวสมบูรณ์ จากนั้นเปลี่ยนชื่อไฟล์ทับไฟล์จริง (เป็น Atomic operation ในระดับ OS)
         if os.path.exists(temp_filepath) and os.path.getsize(temp_filepath) > 0:
             os.replace(temp_filepath, filepath)
     except Exception as e:
         print(f"[Save JSON File Exception]: {e}")
-        # พยายามล้างไฟล์ชั่วคราวที่ตกค้าง
         try:
             if os.path.exists(temp_filepath):
                 os.remove(temp_filepath)
         except Exception:
             pass
 
-# === ระบบความจำอัตโนมัติ (Automatic Memory Extraction - PERFECTLY FULLY FIXED) ===
+# === ระบบความจำอัตโนมัติ ===
 async def extract_and_save_memory(user_msg: str, ai_reply: str):
-    """ฟังก์ชันสกัดความจำเบื้องหลัง ป้องกันเอเรอร์โครงสร้าง JSON ทุกรูปแบบร้อยเปอร์เซ็นต์"""
     lock = get_file_lock(MEMORY_FILE)
     async with lock:
         memories = load_json_file(MEMORY_FILE)
@@ -98,15 +110,11 @@ async def extract_and_save_memory(user_msg: str, ai_reply: str):
     try:
         res = await agent.get_response(extraction_prompt)
         raw_reply = res["reply"].strip()
-        
         new_facts = []
-        
-        # ค้นหาข้อความรูปแบบ JSON ที่แท้จริง (มองหาตัวที่เปิดด้วย {"memories")
         match = re.search(r'\{\s*["\']memories["\']\s*:\s*\[.*\]\s*\}', raw_reply, re.DOTALL)
         
         if match:
             json_content = match.group(0)
-            # แก้ไขสัญกรณ์ Single Quote หลุดกรอบให้กลายเป็น Double Quote ตามมาตรฐาน JSON
             json_content = re.sub(r"'\s*,\s*'", '", "', json_content)
             json_content = re.sub(r"\[\s*'", '["', json_content)
             json_content = re.sub(r"'\s*\]", '"]', json_content)
@@ -115,25 +123,19 @@ async def extract_and_save_memory(user_msg: str, ai_reply: str):
                 parsed = json.loads(json_content)
                 new_facts = parsed.get("memories", [])
             except json.JSONDecodeError:
-                # Fallback Step 1: ถ้า json.loads ยังบ่นเรื่องโควท แงะสดด้วย Regex เลย
                 new_facts = re.findall(r'["\'](.*?)["\']', json_content)
                 new_facts = [f for f in new_facts if f != "memories"]
         else:
-            # Fallback Step 2: ในกรณีที่ AI ไม่ส่งโครงสร้าง JSON มาเลย แต่เขียนมาเป็น List
-            # ดักจับข้อความใดๆ ที่อยู่ในเครื่องหมายอัญประกาศคู่หรือเดี่ยว
             lines = re.findall(r'["\'](.*?)["\']', raw_reply)
             new_facts = [l.strip() for l in lines if l.strip() and l != "memories" and len(l) > 3]
 
-        # ทำการบันทึกเมื่อดึงข้อเท็จจริงออกมาสำเร็จ
         if new_facts:
             async with lock:
-                # โหลดข้อมูลจริงล่าสุดอีกครั้งก่อนจะบันทึก เพื่อกันไม่ให้ทับข้อมูลที่ถูกบันทึกพร้อมกันโดยรีเควสต์อื่น
                 memories = load_json_file(MEMORY_FILE)
                 existing_list = memories.get("facts", [])
                 updated = False
                 
                 for fact in new_facts:
-                    # ป้องกันการบันทึกคำว่า memories เข้าไปตรงๆ และเช็กไม่ให้ซ้ำ
                     if fact not in existing_list and fact.lower() != "memories":
                         existing_list.append(fact)
                         updated = True
@@ -153,6 +155,27 @@ class ChatRequest(BaseModel):
 
 class RenameRequest(BaseModel):
     title: str
+
+class IDEAgentRunRequest(BaseModel):
+    instruction: str
+    max_iterations: Optional[int] = 10
+
+class ReadFileRequest(BaseModel):
+    filepath: str
+
+class PatchFileRequest(BaseModel):
+    filepath: str
+    search_block: Optional[str] = ""
+    replace_block: str
+
+class ViewDirRequest(BaseModel):
+    path: Optional[str] = "."
+
+class ExecuteCommandRequest(BaseModel):
+    command: str
+
+class CloneRepoRequest(BaseModel):
+    repo_url: str
 
 # === API Endpoints ===
 @app.get("/")
@@ -182,7 +205,6 @@ async def chat_endpoint(
 ):
     data_lock = get_file_lock(DATA_FILE)
     memory_lock = get_file_lock(MEMORY_FILE)
-    
     content_type = request.headers.get("content-type", "")
     
     message = ""
@@ -196,11 +218,8 @@ async def chat_endpoint(
         chat_id = form_data.get("chat_id")
         search_web_val = form_data.get("search_web", "false")
         search_web = search_web_val.lower() == "true"
-        
-        # Get list of uploaded files
         files_to_process = form_data.getlist("files")
     else:
-        # Default to application/json
         try:
             json_data = await request.json()
             message = json_data.get("message", "")
@@ -209,17 +228,14 @@ async def chat_endpoint(
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid JSON or request payload")
 
-    # Read and parse attached files
     files_context = ""
     for file in files_to_process:
         filename = file.filename
         if not filename:
             continue
-        
         content_bytes = await file.read()
         if not content_bytes:
             continue
-            
         ext = os.path.splitext(filename)[1].lower()
         
         if ext == ".txt":
@@ -258,7 +274,6 @@ async def chat_endpoint(
             title = t_msg[:15] + "..." if len(t_msg) > 15 else t_msg
             chat_sessions[cid] = {"title": title, "messages": []}
             
-        # Construct the user display message for saving in chat history
         display_message = message
         if files_to_process:
             file_names = ", ".join([f"📎 {f.filename}" for f in files_to_process if f.filename])
@@ -273,15 +288,12 @@ async def chat_endpoint(
             "model": None,
             "total_tokens": 0
         })
-        # บันทึกสถานะชั่วคราวขณะรอการตอบกลับจาก AI เพื่อกันข้อมูลสูญหาย
         save_json_file(DATA_FILE, chat_sessions)
 
-    # Combine message and files_context to send to agent
     agent_message = message
     if files_context:
         agent_message = f"{files_context}\n\nUser Message: {message}"
 
-    # ฉีดประวัติความจำดั้งเดิมเข้าไปประกบ System Context
     injected_message = agent_message
     facts = memories.get("facts", [])
     if facts:
@@ -305,7 +317,6 @@ async def chat_endpoint(
         })
         save_json_file(DATA_FILE, chat_sessions)
     
-    # ส่งงานไปวิเคราะห์ความจำเงียบๆ หลังบ้าน โดยไม่ทำให้หน้าเว็บกระตุก
     background_tasks.add_task(extract_and_save_memory, message, result["reply"])
     
     return {
@@ -338,7 +349,6 @@ async def rename_chat_session(chat_id: str, data: RenameRequest):
             return {"status": "success", "message": "Chat renamed", "title": data.title}
     raise HTTPException(status_code=404, detail="Chat session not found")
 
-# --- Endpoints สำหรับแผงความจำอินเตอร์เฟส ---
 @app.get("/memory")
 async def get_memories():
     lock = get_file_lock(MEMORY_FILE)
@@ -358,3 +368,44 @@ async def delete_single_memory(index: int):
             save_json_file(MEMORY_FILE, memories)
             return {"status": "success", "message": f"Deleted memory: {removed}"}
     raise HTTPException(status_code=404, detail="Index out of range")
+
+# ==============================================================================
+# SECURE EXPOSED API ENDPOINTS FOR KOYEB BACKEND API & VERCEL INTEGRATION
+# ==============================================================================
+
+@app.post("/api/agent/run", dependencies=[Depends(verify_api_token)])
+async def run_ide_agent(req: IDEAgentRunRequest):
+    """Triggers the high-level autonomous IDE Agent on Koyeb with the given instruction."""
+    try:
+        report = await ide_agent.run(req.instruction, req.max_iterations)
+        return {"status": "success", "report": report}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Agent Error: {str(e)}")
+
+@app.post("/api/tools/read_file", dependencies=[Depends(verify_api_token)])
+async def api_read_file(req: ReadFileRequest):
+    return read_file_tool(req.filepath)
+
+@app.post("/api/tools/patch_file", dependencies=[Depends(verify_api_token)])
+async def api_patch_file(req: PatchFileRequest):
+    return patch_file_tool(req.filepath, req.search_block, req.replace_block)
+
+@app.post("/api/tools/view_dir", dependencies=[Depends(verify_api_token)])
+async def api_view_dir(req: ViewDirRequest):
+    return view_dir_tool(req.path)
+
+@app.post("/api/tools/execute_command", dependencies=[Depends(verify_api_token)])
+async def api_execute_command(req: ExecuteCommandRequest):
+    return execute_command_tool(req.command)
+
+@app.post("/api/tools/clone_repository", dependencies=[Depends(verify_api_token)])
+async def api_clone_repository(req: CloneRepoRequest):
+    return clone_repository_tool(req.repo_url)
+
+@app.post("/api/tools/git_status", dependencies=[Depends(verify_api_token)])
+async def api_git_status():
+    return git_status_tool()
+
+@app.post("/api/tools/git_rollback", dependencies=[Depends(verify_api_token)])
+async def api_git_rollback():
+    return git_rollback_tool()
