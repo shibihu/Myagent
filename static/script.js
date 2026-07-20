@@ -446,29 +446,53 @@ async function toggleMCP(provider) {
     if (!btn || !statusSpan) return;
     
     const isConnecting = btn.textContent === "Connect";
+    let token = null;
+    
+    if (isConnecting) {
+        token = await showCustomPrompt(
+            "🔑 Connect MCP Server", 
+            `Please enter your API Key or Token for ${provider.toUpperCase()}:`, 
+            ""
+        );
+        if (token === null || token.trim() === "") {
+            return; // cancelled or empty
+        }
+    }
+    
+    btn.textContent = isConnecting ? "Connecting..." : "Disconnecting...";
+    btn.disabled = true;
     
     try {
         const res = await fetch("/ide/mcp", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ provider, active: isConnecting })
+            body: JSON.stringify({ provider, active: isConnecting, token: token })
         });
+        
         const data = await res.json();
-        if (data.status === "success") {
+        if (res.status === 200 && data.status === "success") {
             if (isConnecting) {
                 btn.textContent = "Disconnect";
                 btn.classList.add("connected");
                 statusSpan.textContent = "Connected";
                 statusSpan.className = "mcp-status connected";
+                await showCustomPrompt("🔌 Connection Succeeded", "Successfully authenticated with provider!", "");
             } else {
                 btn.textContent = "Connect";
                 btn.classList.remove("connected");
                 statusSpan.textContent = "Disconnected";
                 statusSpan.className = "mcp-status disconnected";
             }
+        } else {
+            const errMsg = data.detail || data.message || "Authentication failed.";
+            await showCustomPrompt("❌ Connection Failed", errMsg, "");
+            btn.textContent = isConnecting ? "Connect" : "Disconnect";
         }
     } catch (err) {
-        console.error(err);
+        await showCustomPrompt("❌ Network Error", err.message, "");
+        btn.textContent = isConnecting ? "Connect" : "Disconnect";
+    } finally {
+        btn.disabled = false;
     }
 }
 

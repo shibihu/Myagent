@@ -134,12 +134,24 @@ class GitPushRequest(BaseModel):
 class MCPRequest(BaseModel):
     provider: str
     active: bool
+    token: Optional[str] = None
 
 # === API Endpoints ===
 import subprocess
 
+def is_localhost_request(request: Request) -> bool:
+    """Checks if the request is originating from localhost."""
+    client_host = request.client.host if request.client else None
+    return client_host in ("127.0.0.1", "::1", "localhost")
+
 @app.post("/ide/run")
-async def run_terminal_command(data: CommandRequest):
+async def run_terminal_command(data: CommandRequest, request: Request):
+    if not is_localhost_request(request):
+        raise HTTPException(
+            status_code=403, 
+            detail="❌ Access Denied: Executing terminal commands is restricted to localhost for security."
+        )
+        
     cmd = data.command.strip()
     if not cmd:
         return {"output": ""}
@@ -161,7 +173,13 @@ async def run_terminal_command(data: CommandRequest):
         return {"output": f"Error: {e}"}
 
 @app.post("/ide/git-push")
-async def git_push_workspace(data: GitPushRequest):
+async def git_push_workspace(data: GitPushRequest, request: Request):
+    if not is_localhost_request(request):
+        raise HTTPException(
+            status_code=403, 
+            detail="❌ Access Denied: Git operations are restricted to localhost for security."
+        )
+        
     msg = data.commit_message.strip()
     if not msg:
         raise HTTPException(status_code=400, detail="Commit message is required")
@@ -183,11 +201,51 @@ async def git_push_workspace(data: GitPushRequest):
         return {"status": "error", "message": f"Git pushing failed: {e}"}
 
 mcp_states = {}
+import httpx
 
 @app.post("/ide/mcp")
 async def mcp_connection_manager(data: MCPRequest):
-    mcp_states[data.provider] = data.active
-    return {"status": "success", "provider": data.provider, "active": data.active}
+    if not data.active:
+        mcp_states[data.provider] = False
+        return {"status": "success", "provider": data.provider, "active": False}
+    
+    token = data.token.strip() if data.token else ""
+    if not token:
+        raise HTTPException(status_code=400, detail="API Token/Key is required to connect!")
+        
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            if data.provider == "github":
+                # Validate GitHub Personal Access Token (PAT)
+                res = await client.get(
+                    "https://api.github.com/user",
+                    headers={"Authorization": f"token {token}"}
+                )
+                if res.status_code != 200:
+                    raise HTTPException(status_code=400, detail=f"Invalid GitHub Token (Status {res.status_code}): {res.text}")
+                    
+            elif data.provider == "render":
+                # Validate Render API Key
+                res = await client.get(
+                    "https://api.render.com/v1/services",
+                    headers={"Authorization": f"Bearer {token}"}
+                )
+                if res.status_code != 200:
+                    raise HTTPException(status_code=400, detail=f"Invalid Render Token (Status {res.status_code}): {res.text}")
+                    
+            elif data.provider == "roblox":
+                # Roblox OpenCloud key validation or syntax check
+                if len(token) < 20:
+                    raise HTTPException(status_code=400, detail="Invalid Roblox OpenCloud Key format.")
+                    
+            else:
+                raise HTTPException(status_code=400, detail="Unknown provider")
+                
+        mcp_states[data.provider] = True
+        return {"status": "success", "provider": data.provider, "active": True, "message": "Successfully validated and connected!"}
+        
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=500, detail=f"Network error trying to connect to provider: {e}")
 
 @app.get("/")
 async def index_page(request: Request):
