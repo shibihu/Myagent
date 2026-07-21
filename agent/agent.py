@@ -4,7 +4,8 @@ import json
 from agent.tools import (
     read_file_tool, write_file_tool, list_directory_tool,
     patch_file_tool, view_dir_tool, execute_command_tool,
-    clone_repository_tool, git_status_tool, git_rollback_tool
+    clone_repository_tool, git_status_tool, git_rollback_tool,
+    git_checkout_tool, git_pull_tool
 )
 
 class ChatAgent:
@@ -15,9 +16,18 @@ class ChatAgent:
         self.openai_key = os.getenv("OPENAI_API_KEY", "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")
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY", "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")
 
-    async def get_response(self, prompt: str) -> dict:
+    async def get_response(self, prompt: str, status_callback=None) -> dict:
         """ระบบสลับสมองข้ามค่ายอัตโนมัติพร้อมระบบ Tool Calling (Function Calling) ของ Groq และ OpenAI"""
         
+        async def trigger_status(msg: str):
+            if status_callback:
+                try:
+                    await status_callback(msg)
+                except Exception:
+                    pass
+
+        await trigger_status("Thinking / Processing...")
+
         system_message = {
             "role": "system",
             "content": (
@@ -146,6 +156,62 @@ class ChatAgent:
                         "required": ["command"]
                     }
                 }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "git_clone",
+                    "description": "Clones a remote git repository into the workspace directory.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "repo_url": {
+                                "type": "string",
+                                "description": "The GitHub repository URL to clone."
+                            }
+                        },
+                        "required": ["repo_url"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "git_status",
+                    "description": "Checks the current modified, added, or deleted files in the git workspace.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "git_checkout",
+                    "description": "Switches to an existing git branch or creates a new one.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "branch_name": {
+                                "type": "string",
+                                "description": "The name of the branch to switch to or create."
+                            }
+                        },
+                        "required": ["branch_name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "git_pull",
+                    "description": "Pulls the latest updates from the remote repository.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }
             }
         ]
 
@@ -168,6 +234,14 @@ class ChatAgent:
                     return view_dir_tool(args.get("path", "."))
                 elif name == "execute_command":
                     return execute_command_tool(args.get("command", ""))
+                elif name == "git_clone" or name == "clone_repository":
+                    return clone_repository_tool(args.get("repo_url", ""))
+                elif name == "git_status":
+                    return git_status_tool()
+                elif name == "git_checkout":
+                    return git_checkout_tool(args.get("branch_name", ""))
+                elif name == "git_pull":
+                    return git_pull_tool()
                 else:
                     return {"status": "error", "message": f"Unknown tool: {name}"}
             except Exception as e:
@@ -221,6 +295,26 @@ class ChatAgent:
                                             parsed_args = {}
                                     else:
                                         parsed_args = raw_args or {}
+
+                                    # Provide dynamic progress/workflow status updates before invoking the tool
+                                    if tool_name == "read_file":
+                                        await trigger_status(f"Reading file: {parsed_args.get('filepath', '')}...")
+                                    elif tool_name == "write_file":
+                                        await trigger_status(f"Updating code: {parsed_args.get('filepath', '')}...")
+                                    elif tool_name == "patch_file":
+                                        await trigger_status(f"Patching file: {parsed_args.get('filepath', '')}...")
+                                    elif tool_name == "execute_command":
+                                        await trigger_status(f"Running command: {parsed_args.get('command', '')}...")
+                                    elif tool_name == "git_clone" or tool_name == "clone_repository":
+                                        await trigger_status(f"Git cloning repository: {parsed_args.get('repo_url', '')}...")
+                                    elif tool_name == "git_checkout":
+                                        await trigger_status(f"Git checking out branch: {parsed_args.get('branch_name', '')}...")
+                                    elif tool_name == "git_pull":
+                                        await trigger_status("Git pulling updates...")
+                                    elif tool_name == "git_status":
+                                        await trigger_status("Checking git status...")
+                                    else:
+                                        await trigger_status(f"Running tool {tool_name}...")
 
                                     # Execute the tool
                                     tool_output = execute_local_tool(tool_name, parsed_args)
@@ -321,6 +415,26 @@ class ChatAgent:
                                             parsed_args = {}
                                     else:
                                         parsed_args = raw_args or {}
+
+                                    # Provide dynamic progress/workflow status updates before invoking the tool (OpenAI fallback)
+                                    if tool_name == "read_file":
+                                        await trigger_status(f"Reading file: {parsed_args.get('filepath', '')}...")
+                                    elif tool_name == "write_file":
+                                        await trigger_status(f"Updating code: {parsed_args.get('filepath', '')}...")
+                                    elif tool_name == "patch_file":
+                                        await trigger_status(f"Patching file: {parsed_args.get('filepath', '')}...")
+                                    elif tool_name == "execute_command":
+                                        await trigger_status(f"Running command: {parsed_args.get('command', '')}...")
+                                    elif tool_name == "git_clone" or tool_name == "clone_repository":
+                                        await trigger_status(f"Git cloning repository: {parsed_args.get('repo_url', '')}...")
+                                    elif tool_name == "git_checkout":
+                                        await trigger_status(f"Git checking out branch: {parsed_args.get('branch_name', '')}...")
+                                    elif tool_name == "git_pull":
+                                        await trigger_status("Git pulling updates...")
+                                    elif tool_name == "git_status":
+                                        await trigger_status("Checking git status...")
+                                    else:
+                                        await trigger_status(f"Running tool {tool_name}...")
 
                                     # Execute the tool
                                     tool_output = execute_local_tool(tool_name, parsed_args)

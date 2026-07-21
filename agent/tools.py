@@ -148,6 +148,80 @@ def execute_command_tool(command: str) -> dict:
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+def git_checkout_tool(branch_name: str) -> dict:
+    """Switches to an existing branch or creates a new one."""
+    ws = ensure_workspace()
+    if not os.path.exists(os.path.join(ws, ".git")):
+        return {"status": "error", "message": "No git repository found in workspace."}
+
+    try:
+        # Try checking out the existing branch
+        process = subprocess.run(
+            f"git checkout {branch_name}",
+            shell=True,
+            cwd=ws,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        if process.returncode != 0:
+            # If branch doesn't exist locally, try creating it with -b
+            process2 = subprocess.run(
+                f"git checkout -b {branch_name}",
+                shell=True,
+                cwd=ws,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            if process2.returncode == 0:
+                return {
+                    "status": "success",
+                    "message": f"Successfully created and switched to branch '{branch_name}'.",
+                    "stdout": process2.stdout
+                }
+            return {
+                "status": "error",
+                "message": f"Failed to checkout branch '{branch_name}'.",
+                "stderr": process.stderr + "\n" + process2.stderr
+            }
+        return {
+            "status": "success",
+            "message": f"Successfully switched to branch '{branch_name}'.",
+            "stdout": process.stdout
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+def git_pull_tool() -> dict:
+    """Pulls the latest changes from the remote repository."""
+    ws = ensure_workspace()
+    if not os.path.exists(os.path.join(ws, ".git")):
+        return {"status": "error", "message": "No git repository found in workspace."}
+
+    try:
+        process = subprocess.run(
+            "git pull",
+            shell=True,
+            cwd=ws,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        if process.returncode == 0:
+            return {
+                "status": "success",
+                "message": "Successfully pulled changes from remote.",
+                "stdout": process.stdout
+            }
+        return {
+            "status": "error",
+            "message": "Failed to pull changes.",
+            "stderr": process.stderr
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 def write_file_tool(filepath: str, content: str) -> dict:
     """Writes or overwrites a file inside the workspace entirely with the given content."""
     try:

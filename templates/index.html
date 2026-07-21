@@ -65,6 +65,19 @@
                     </svg>
                 </button>
                 <input type="file" id="file-input" multiple accept=".jpg,.jpeg,.png,.txt,.pdf" style="display:none;">
+                <input type="file" id="ide-file-upload-input" style="display:none;">
+
+                <!-- Floating Pop-up Menu -->
+                <div id="attachment-menu" class="attachment-popup-menu hidden">
+                    <button id="menu-upload-file-btn" class="menu-item pop-btn" type="button">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;margin-right:8px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                        Upload File
+                    </button>
+                    <button id="menu-github-import-btn" class="menu-item pop-btn" type="button">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;margin-right:8px;"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+                        Import from GitHub
+                    </button>
+                </div>
 
                 <button id="search-web-toggle" class="pop-btn" title="Toggle Web Search">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
@@ -107,6 +120,30 @@
             <div class="modal-footer">
                 <button id="modal-cancel-btn" class="pop-btn secondary-btn">Cancel</button>
                 <button id="modal-ok-btn" class="pop-btn primary-btn">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Gorgeous GitHub Import Modal -->
+    <div id="github-modal" class="modal-overlay hidden">
+        <div class="modal-container pop-btn" style="max-width: 500px;">
+            <div class="modal-header">
+                <span>🐙 GitHub Repository Import</span>
+                <button id="github-close-btn" class="pop-btn" style="background:transparent;border:none;color:var(--text-muted);font-size:18px;cursor:pointer;">✕</button>
+            </div>
+            <div class="modal-body" style="padding: 20px;">
+                <div id="github-token-section">
+                    <label style="font-size: 13px; font-weight: 600; color: var(--text-muted);">GitHub Personal Access Token (PAT)</label>
+                    <input type="password" id="github-token-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off" style="width: 100%; padding: 10px 14px; background-color: #1e1f29; border: 1.5px solid #4a4b56; border-radius: 8px; color: #ffffff; font-size: 14.5px; margin-top: 6px; margin-bottom: 12px;">
+                    <button id="github-connect-btn" class="pop-btn primary-btn" style="width: 100%; padding: 10px 14px; border-radius: 8px; font-weight: 600;">Connect GitHub Account</button>
+                </div>
+
+                <div id="github-repos-section" class="hidden" style="margin-top: 10px;">
+                    <label style="font-size: 13px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 6px;">Select Repository to Import</label>
+                    <select id="github-repo-select" class="modal-select"></select>
+
+                    <button id="github-import-submit-btn" class="pop-btn primary-btn" style="width: 100%; padding: 11px 14px; border-radius: 8px; font-weight: 600; margin-top: 16px;">Clone Repo into Workspace</button>
+                </div>
             </div>
         </div>
     </div>
