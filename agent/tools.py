@@ -246,18 +246,34 @@ def clone_repository_tool(repo_url: str) -> dict:
     """Clones a GitHub repository into the workspace. If workspace has content, cleans it up first."""
     ws = ensure_workspace()
     try:
-        # If workspace exists and has a .git, let's remove existing files or the folder to clean-slate it
-        if os.path.exists(ws):
-            # We can clean everything in the workspace folder first
-            for item in os.listdir(ws):
-                item_path = os.path.join(ws, item)
-                if os.path.isdir(item_path):
-                    shutil.rmtree(item_path)
-                else:
-                    os.remove(item_path)
+        # 1. Check if git is installed on the server
+        if shutil.which("git") is None:
+            return {
+                "status": "error",
+                "message": "Git command not found on the system. Please ensure git is installed."
+            }
 
-        # Clone repo into ws
-        # We clone to a temp directory or we clone directly inside ws (git clone <url> .)
+        # 2. Clear target directory fully and robustly (including all hidden files)
+        if os.path.exists(ws):
+            try:
+                shutil.rmtree(ws)
+            except Exception as rmtree_err:
+                # Fallback: remove files one by one if rmtree has permissions issues
+                for root, dirs, files in os.walk(ws, topdown=False):
+                    for name in files:
+                        try:
+                            os.remove(os.path.join(root, name))
+                        except Exception:
+                            pass
+                    for name in dirs:
+                        try:
+                            shutil.rmtree(os.path.join(root, name))
+                        except Exception:
+                            pass
+
+        os.makedirs(ws, exist_ok=True)
+
+        # 3. Run git clone via subprocess.run
         process = subprocess.run(
             f"git clone {repo_url} .",
             shell=True,
@@ -268,11 +284,24 @@ def clone_repository_tool(repo_url: str) -> dict:
             timeout=120
         )
         if process.returncode == 0:
-            return {"status": "success", "message": f"Repository cloned successfully.", "stdout": process.stdout}
+            return {
+                "status": "success",
+                "message": "Repository cloned successfully.",
+                "stdout": process.stdout
+            }
         else:
-            return {"status": "error", "message": "Failed to clone repository.", "stderr": process.stderr}
+            # Return system stderr so LLM / user can see the exact error output
+            return {
+                "status": "error",
+                "message": "Failed to clone repository.",
+                "stderr": process.stderr or "Unknown terminal clone error",
+                "stdout": process.stdout
+            }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+# Alias for git_clone_tool to ensure consistency
+git_clone_tool = clone_repository_tool
 
 def git_status_tool() -> dict:
     """Checks git status of the workspace."""
