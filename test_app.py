@@ -2,6 +2,8 @@ import importlib
 import os
 import unittest
 import shutil
+import json
+import asyncio
 from unittest.mock import patch
 from fastapi.testclient import TestClient
 
@@ -12,6 +14,7 @@ from agent.tools import (
     git_status_tool, git_rollback_tool, WORKSPACE_DIR,
     write_file_tool, list_directory_tool
 )
+from agent.agent import ChatAgent
 
 class AppTests(unittest.TestCase):
     def setUp(self):
@@ -141,6 +144,69 @@ class AppTests(unittest.TestCase):
         self.assertEqual(res["status"], "success")
         self.assertEqual(res["returncode"], 0)
         self.assertIn("Jules is here", res["stdout"])
+
+    def test_chat_agent_tool_calling(self):
+        """Test that ChatAgent tool calling processes tool calls and executes them correctly."""
+        agent_instance = ChatAgent()
+
+        # We mock the post requests in sequence:
+        # First call: returns a tool call requesting write_file
+        # Second call: returns the final text response
+        class MockResponse:
+            def __init__(self, json_data, status_code=200):
+                self._json = json_data
+                self.status_code = status_code
+            def json(self):
+                return self._json
+
+        mock_responses = [
+            MockResponse({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": "call_mock123",
+                            "type": "function",
+                            "function": {
+                                "name": "write_file",
+                                "arguments": json.dumps({"filepath": "hello_test.txt", "content": "Hello from mock!"})
+                            }
+                        }]
+                    }
+                }],
+                "usage": {"total_tokens": 50}
+            }),
+            MockResponse({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "I have successfully written the file for you.",
+                        "tool_calls": None
+                    }
+                }],
+                "usage": {"total_tokens": 100}
+            })
+        ]
+
+        response_iterator = iter(mock_responses)
+
+        async def mock_post(*args, **kwargs):
+            return next(response_iterator)
+
+        with patch("httpx.AsyncClient.post", side_effect=mock_post):
+            # Run get_response
+            result = asyncio.run(agent_instance.get_response("Write a file named hello_test.txt with 'Hello from mock!'"))
+
+            # Assertions
+            self.assertEqual(result["model"], "Groq (Llama-3.3-70b)")
+            self.assertEqual(result["reply"], "I have successfully written the file for you.")
+
+            # Verify file was actually written in the workspace!
+            file_path = os.path.join(WORKSPACE_DIR, "hello_test.txt")
+            self.assertTrue(os.path.exists(file_path))
+            with open(file_path, "r", encoding="utf-8") as f:
+                self.assertEqual(f.read(), "Hello from mock!")
 
 if __name__ == "__main__":
     unittest.main()
