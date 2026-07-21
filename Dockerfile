@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy all source files into the container
 COPY . .
 
-# Expose port for Koyeb to target (Koyeb defaults to routing to 8000 or custom)
+# Expose port for Railway to target
 EXPOSE 8000
 
 # Set production/secure environment defaults

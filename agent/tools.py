@@ -18,12 +18,18 @@ def clean_path(filepath: str) -> str:
     ws = ensure_workspace()
     # Normalize path
     absolute_path = os.path.abspath(os.path.join(ws, filepath))
-    # It's okay if they read/write inside the workspace
+    # Throw an exception if directory traversal outside the workspace is attempted
+    if not absolute_path.startswith(ws):
+        raise ValueError("Directory traversal attempt detected.")
     return absolute_path
 
 def read_file_tool(filepath: str) -> dict:
     """Reads the content of a file relative to the workspace."""
-    target_path = clean_path(filepath)
+    try:
+        target_path = clean_path(filepath)
+    except ValueError as ve:
+        return {"status": "error", "message": str(ve)}
+
     if not os.path.exists(target_path):
         return {"status": "error", "message": f"File '{filepath}' not found."}
     if os.path.isdir(target_path):
@@ -37,7 +43,11 @@ def read_file_tool(filepath: str) -> dict:
 
 def patch_file_tool(filepath: str, search_block: str, replace_block: str) -> dict:
     """Patches a file relative to the workspace using exact block search and replace."""
-    target_path = clean_path(filepath)
+    try:
+        target_path = clean_path(filepath)
+    except ValueError as ve:
+        return {"status": "error", "message": str(ve)}
+
     if not os.path.exists(target_path):
         # If file doesn't exist, we can optionally create it if search_block is empty or if we want to write new content
         if not search_block:
@@ -83,7 +93,11 @@ def patch_file_tool(filepath: str, search_block: str, replace_block: str) -> dic
 
 def view_dir_tool(path: str = ".") -> dict:
     """Recursively lists folders and files in the workspace directory."""
-    target_path = clean_path(path)
+    try:
+        target_path = clean_path(path)
+    except ValueError as ve:
+        return {"status": "error", "message": str(ve)}
+
     if not os.path.exists(target_path):
         return {"status": "error", "message": f"Path '{path}' does not exist."}
 
