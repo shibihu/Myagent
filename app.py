@@ -6,6 +6,7 @@ import asyncio
 from typing import Optional, List
 import io
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Form, File, UploadFile, Header, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -34,6 +35,15 @@ async def verify_api_token(x_api_token: Optional[str] = Header(None, alias="X-AP
         raise HTTPException(status_code=403, detail="Forbidden: Invalid or missing API security token.")
 
 app = FastAPI()
+
+# Add CORS middleware to allow cross-origin requests from Vercel deployment
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
@@ -124,7 +134,16 @@ class CloneRepoRequest(BaseModel):
 # === API Endpoints ===
 @app.get("/")
 async def index_page(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html", context={"request": request})
+    # Fetch NEXT_PUBLIC_API_URL if configured, so we can inject it dynamically into the index page
+    backend_url = os.environ.get("NEXT_PUBLIC_API_URL", "")
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={
+            "request": request,
+            "NEXT_PUBLIC_API_URL": backend_url
+        }
+    )
 
 @app.get("/chats")
 async def get_all_chats():

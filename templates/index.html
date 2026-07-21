@@ -111,6 +111,10 @@
         </div>
     </div>
 
+    <script>
+        // Inject NEXT_PUBLIC_API_URL from backend env variable for cross-origin API calls on frontend
+        window.BACKEND_API_URL = "{{ NEXT_PUBLIC_API_URL }}";
+    </script>
     <script src="/static/script.js"></script>
 </body>
 </html>

@@ -27,6 +27,20 @@ if (typeof hljs !== 'undefined') {
     });
 }
 
+// Determine backend API URL (useful for cross-origin hosting e.g. Vercel client calling Railway backend)
+const API_BASE = (() => {
+    let url = window.BACKEND_API_URL || "";
+    if (url) {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            url = "https://" + url;
+        }
+        if (url.endsWith("/")) {
+            url = url.slice(0, -1);
+        }
+    }
+    return url;
+})();
+
 const input = document.getElementById("message-input");
 const button = document.getElementById("send-button");
 const chatBox = document.getElementById("chat-box");
@@ -361,7 +375,7 @@ async function sendMessage() {
     toggleTyping(true);
 
     try {
-        const response = await fetch("/chat", {
+        const response = await fetch(`${API_BASE}/chat`, {
             method: "POST",
             body: formData
         });
@@ -453,7 +467,7 @@ function showCustomModal({ title, message, showInput = false, defaultValue = "",
 
 async function loadChatHistoryList() {
     try {
-        const res = await fetch("/chats");
+        const res = await fetch(`${API_BASE}/chats`);
         const list = await res.json();
         historyList.innerHTML = "";
         
@@ -524,11 +538,11 @@ async function loadChatHistoryList() {
     } catch (err) { console.error(err); }
 }
 
-async function switchChatSession(cId) { currentChatId = cId; chatBox.innerHTML = ""; const res = await fetch(`/chats/${cId}`); const d = await res.json(); chatTitle.textContent = d.title; d.messages.forEach(m => renderStaticMessage(m.role, m.content, m.model, m.total_tokens)); loadChatHistoryList(); }
-async function renameChatSession(cId, title) { await fetch(`/chats/${cId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) }); loadChatHistoryList(); }
-async function deleteChatSession(cId) { await fetch(`/chats/${cId}`, { method: "DELETE" }); if (currentChatId === cId) { currentChatId = null; chatBox.innerHTML = ""; chatTitle.textContent = "ChatGPT 4o"; } loadChatHistoryList(); }
-async function loadMemoriesList() { const res = await fetch("/memory"); const d = await res.json(); memoryList.innerHTML = d.memories.length === 0 ? "<li>No memory</li>" : ""; d.memories.forEach((f, i) => { const li = document.createElement("li"); li.className = "memory-item"; li.innerHTML = `<span>${f}</span><button class="memory-delete-btn pop-btn" onclick="deleteMemoryFact(${i})">🗑️</button>`; memoryList.appendChild(li); }); }
-async function deleteMemoryFact(i) { await fetch(`/memory/${i}`, { method: "DELETE" }); loadMemoriesList(); }
+async function switchChatSession(cId) { currentChatId = cId; chatBox.innerHTML = ""; const res = await fetch(`${API_BASE}/chats/${cId}`); const d = await res.json(); chatTitle.textContent = d.title; d.messages.forEach(m => renderStaticMessage(m.role, m.content, m.model, m.total_tokens)); loadChatHistoryList(); }
+async function renameChatSession(cId, title) { await fetch(`${API_BASE}/chats/${cId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) }); loadChatHistoryList(); }
+async function deleteChatSession(cId) { await fetch(`${API_BASE}/chats/${cId}`, { method: "DELETE" }); if (currentChatId === cId) { currentChatId = null; chatBox.innerHTML = ""; chatTitle.textContent = "ChatGPT 4o"; } loadChatHistoryList(); }
+async function loadMemoriesList() { const res = await fetch(`${API_BASE}/memory`); const d = await res.json(); memoryList.innerHTML = d.memories.length === 0 ? "<li>No memory</li>" : ""; d.memories.forEach((f, i) => { const li = document.createElement("li"); li.className = "memory-item"; li.innerHTML = `<span>${f}</span><button class="memory-delete-btn pop-btn" onclick="deleteMemoryFact(${i})">🗑️</button>`; memoryList.appendChild(li); }); }
+async function deleteMemoryFact(i) { await fetch(`${API_BASE}/memory/${i}`, { method: "DELETE" }); loadMemoriesList(); }
 
 newChatBtn.onclick = () => { if (!isTypingActive) { currentChatId = null; chatBox.innerHTML = ""; chatTitle.textContent = "ChatGPT 4o"; loadChatHistoryList(); } };
 button.onclick = sendMessage;
