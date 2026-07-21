@@ -148,6 +148,26 @@ def execute_command_tool(command: str) -> dict:
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+def write_file_tool(filepath: str, content: str) -> dict:
+    """Writes or overwrites a file inside the workspace entirely with the given content."""
+    try:
+        target_path = clean_path(filepath)
+    except ValueError as ve:
+        return {"status": "error", "message": str(ve)}
+
+    try:
+        # Ensure parent directories exist
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return {"status": "success", "message": f"Successfully wrote/overwrote file '{filepath}'."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+def list_directory_tool(path: str = ".") -> dict:
+    """Lists directory structure and contents in the workspace (alias to view_dir_tool)."""
+    return view_dir_tool(path)
+
 def clone_repository_tool(repo_url: str) -> dict:
     """Clones a GitHub repository into the workspace. If workspace has content, cleans it up first."""
     ws = ensure_workspace()

@@ -21,7 +21,8 @@ from database import db_helper
 from agent.tools import (
     read_file_tool, patch_file_tool, view_dir_tool,
     execute_command_tool, clone_repository_tool,
-    git_status_tool, git_rollback_tool
+    git_status_tool, git_rollback_tool,
+    write_file_tool, list_directory_tool
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -130,6 +131,13 @@ class ExecuteCommandRequest(BaseModel):
 
 class CloneRepoRequest(BaseModel):
     repo_url: str
+
+class WriteFileRequest(BaseModel):
+    filepath: str
+    content: str
+
+class ListDirectoryRequest(BaseModel):
+    path: Optional[str] = "."
 
 # === API Endpoints ===
 @app.get("/")
@@ -349,3 +357,11 @@ async def api_git_status():
 @app.post("/api/tools/git_rollback", dependencies=[Depends(verify_api_token)])
 async def api_git_rollback():
     return git_rollback_tool()
+
+@app.post("/api/tools/write_file", dependencies=[Depends(verify_api_token)])
+async def api_write_file(req: WriteFileRequest):
+    return write_file_tool(req.filepath, req.content)
+
+@app.post("/api/tools/list_directory", dependencies=[Depends(verify_api_token)])
+async def api_list_directory(req: ListDirectoryRequest):
+    return list_directory_tool(req.path)
