@@ -91,7 +91,9 @@ class PostgreSQLHelper:
 
     async def get_pool(self):
         if not self._pool:
-            self._pool = await asyncpg.create_pool(self.url)
+            # Disable prepared statement caching (statement_cache_size=0) to prevent failures
+            # when connecting to pooled databases like Supabase/PgBouncer in transaction mode.
+            self._pool = await asyncpg.create_pool(self.url, statement_cache_size=0)
         return self._pool
 
     async def get_all_chats(self) -> List[dict]:

@@ -240,9 +240,9 @@ async def chat_endpoint(
     
     result = await agent.get_response(injected_message)
     
-    # Reload and append AI reply
-    current_chat = await db_helper.get_chat_history(cid)
-    messages = current_chat.get("messages", [])
+    # Append AI reply directly to the message chain instead of re-fetching from the database.
+    # This guarantees that the message list is kept intact and updated sequentially,
+    # avoiding any transient state read/write delays or query desynchronization.
     messages.append({
         "role": "ai",
         "content": result["reply"],
