@@ -253,10 +253,17 @@ if (githubImportSubmitBtn) {
             githubModal.classList.add("hidden");
 
             if (data.status === "success") {
+                const repoName = selectedCloneUrl.split('/').pop().replace('.git', '');
                 showCustomModal({
                     title: "Import Successful",
-                    message: "โคลน Repository ลงใน Workspace สำเร็จแล้ว! คุณสามารถสั่งงานบอตผ่านแชทได้ทันที"
+                    message: `โคลน Repository "${repoName}" ลงใน Workspace สำเร็จแล้ว! กำลังส่งสัญญาณแจ้งเตือนระบบ...`
                 });
+
+                // Automatically notify the AI agent with a system hidden message to update context
+                setTimeout(() => {
+                    input.value = `[SYSTEM]: Repository ${repoName} has been imported to workspace directory successfully.`;
+                    sendMessage();
+                }, 800);
             } else {
                 showCustomModal({
                     title: "Import Failed",
