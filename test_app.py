@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 from agent.tools import (
     read_file_tool, patch_file_tool, view_dir_tool,
     execute_command_tool, clone_repository_tool,
-    git_status_tool, git_rollback_tool, WORKSPACE_DIR
+    git_status_tool, git_rollback_tool, WORKSPACE_DIR,
+    write_file_tool, list_directory_tool
 )
 
 class AppTests(unittest.TestCase):
@@ -124,6 +125,15 @@ class AppTests(unittest.TestCase):
         res_dir = view_dir_tool()
         self.assertEqual(res_dir["status"], "success")
         self.assertIn("test_code.py", res_dir["files"])
+
+        # 6. Test direct write file tool
+        res_write = write_file_tool("direct_write.py", "print('direct')")
+        self.assertEqual(res_write["status"], "success")
+
+        # 7. Test direct list directory tool
+        res_list = list_directory_tool()
+        self.assertEqual(res_list["status"], "success")
+        self.assertIn("direct_write.py", res_list["files"])
 
     def test_direct_execute_command_tool(self):
         """Test terminal execution tool."""
