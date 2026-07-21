@@ -58,36 +58,232 @@ const memoryList = document.getElementById("memory-list");
 const typingIndicator = document.getElementById("typing-indicator");
 const searchWebToggle = document.getElementById("search-web-toggle");
 
-// Elements for File Upload
+// Elements for File Upload & Attachment Dropdown Menu
 const attachmentBtn = document.getElementById("attachment-btn");
 const fileInput = document.getElementById("file-input");
 const filePreviewBar = document.getElementById("file-preview-bar");
+
+const attachmentMenu = document.getElementById("attachment-menu");
+const menuUploadFileBtn = document.getElementById("menu-upload-file-btn");
+const menuGithubImportBtn = document.getElementById("menu-github-import-btn");
+const ideFileUploadInput = document.getElementById("ide-file-upload-input");
+
+// Elements for GitHub Import Modal
+const githubModal = document.getElementById("github-modal");
+const githubCloseBtn = document.getElementById("github-close-btn");
+const githubTokenInput = document.getElementById("github-token-input");
+const githubConnectBtn = document.getElementById("github-connect-btn");
+const githubReposSection = document.getElementById("github-repos-section");
+const githubRepoSelect = document.getElementById("github-repo-select");
+const githubImportSubmitBtn = document.getElementById("github-import-submit-btn");
 
 let currentChatId = null;
 let isTypingActive = false;
 let isWebSearchEnabled = false;
 let selectedFiles = [];
 
-// Trigger file input click when attachment button is clicked
-if (attachmentBtn && fileInput) {
+// Toggle attachment dropdown menu
+if (attachmentBtn && attachmentMenu) {
     attachmentBtn.onclick = (e) => {
         e.preventDefault();
+        e.stopPropagation();
+        attachmentMenu.classList.toggle("hidden");
+    };
+
+    // Close dropdown menu when clicking anywhere else
+    document.addEventListener("click", () => {
+        attachmentMenu.classList.add("hidden");
+    });
+}
+
+// Upload file list click (for chat attachments)
+if (menuUploadFileBtn && fileInput) {
+    menuUploadFileBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        attachmentMenu.classList.add("hidden");
         fileInput.click();
     };
 }
 
-// Handle selected files
+// direct direct Upload file to backend workspace
+if (ideFileUploadInput) {
+    ideFileUploadInput.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        ideFileUploadInput.value = ""; // reset
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        try {
+            const resp = await fetch(`${API_BASE}/api/upload-file`, {
+                method: "POST",
+                body: formData
+            });
+            const data = await resp.json();
+            if (resp.status === 200 || data.status === "success") {
+                showCustomModal({
+                    title: "Upload Successful",
+                    message: `ไฟล์ ${file.name} ได้รับการอัปโหลดเซฟลงใน Workspace เรียบร้อยแล้ว!`
+                });
+            } else {
+                showCustomModal({
+                    title: "Upload Failed",
+                    message: `ไม่สามารถอัปโหลดไฟล์ได้: ${data.detail || "Unknown error"}`
+                });
+            }
+        } catch (err) {
+            console.error(err);
+            showCustomModal({
+                title: "Upload Error",
+                message: "เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์หลังบ้าน"
+            });
+        }
+    };
+}
+
+// GitHub Modal display trigger
+if (menuGithubImportBtn && githubModal) {
+    menuGithubImportBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        attachmentMenu.classList.add("hidden");
+        githubModal.classList.remove("hidden");
+
+        // Load saved GitHub PAT
+        const savedToken = localStorage.getItem("github_pat");
+        if (savedToken) {
+            githubTokenInput.value = savedToken;
+        }
+    };
+}
+
+if (githubCloseBtn && githubModal) {
+    githubCloseBtn.onclick = () => {
+        githubModal.classList.add("hidden");
+    };
+}
+
+// Connect GitHub Account & fetch Repositories
+if (githubConnectBtn) {
+    githubConnectBtn.onclick = async () => {
+        const token = githubTokenInput.value.trim();
+        if (!token) {
+            showCustomModal({
+                title: "Authentication Error",
+                message: "กรุณากรอก GitHub Personal Access Token"
+            });
+            return;
+        }
+
+        githubConnectBtn.textContent = "Connecting...";
+        githubConnectBtn.disabled = true;
+
+        try {
+            const resp = await fetch(`${API_BASE}/api/github/repos`, {
+                method: "GET",
+                headers: {
+                    "X-GitHub-Token": token
+                }
+            });
+            const data = await resp.json();
+
+            githubConnectBtn.textContent = "Connect GitHub Account";
+            githubConnectBtn.disabled = false;
+
+            if (data.status === "success" && data.repos) {
+                // Save PAT
+                localStorage.setItem("github_pat", token);
+
+                // Clear and populate repositories select dropdown
+                githubRepoSelect.innerHTML = "";
+                data.repos.forEach(repo => {
+                    const opt = document.createElement("option");
+                    opt.value = repo.clone_url;
+                    opt.textContent = `${repo.full_name} (${repo.private ? "Private" : "Public"})`;
+                    githubRepoSelect.appendChild(opt);
+                });
+
+                githubReposSection.classList.remove("hidden");
+            } else {
+                showCustomModal({
+                    title: "Connection Failed",
+                    message: data.message || "ไม่สามารถเชื่อมต่อ GitHub ได้ ตรวจสอบ Token ของคุณอีกครั้ง"
+                });
+            }
+        } catch (err) {
+            console.error(err);
+            githubConnectBtn.textContent = "Connect GitHub Account";
+            githubConnectBtn.disabled = false;
+            showCustomModal({
+                title: "Network Error",
+                message: "เชื่อมต่อหลังบ้านล้มเหลว กรุณาลองใหม่อีกครั้ง"
+            });
+        }
+    };
+}
+
+// Clone GitHub Repository into Workspace
+if (githubImportSubmitBtn) {
+    githubImportSubmitBtn.onclick = async () => {
+        const selectedCloneUrl = githubRepoSelect.value;
+        const token = githubTokenInput.value.trim();
+        if (!selectedCloneUrl) return;
+
+        githubImportSubmitBtn.textContent = "Cloning repository...";
+        githubImportSubmitBtn.disabled = true;
+
+        try {
+            const resp = await fetch(`${API_BASE}/api/github/clone`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    repo_url: selectedCloneUrl,
+                    token: token
+                })
+            });
+            const data = await resp.json();
+
+            githubImportSubmitBtn.textContent = "Clone Repo into Workspace";
+            githubImportSubmitBtn.disabled = false;
+            githubModal.classList.add("hidden");
+
+            if (data.status === "success") {
+                showCustomModal({
+                    title: "Import Successful",
+                    message: "โคลน Repository ลงใน Workspace สำเร็จแล้ว! คุณสามารถสั่งงานบอตผ่านแชทได้ทันที"
+                });
+            } else {
+                showCustomModal({
+                    title: "Import Failed",
+                    message: data.message || "โคลนล้มเหลว ตรวจสอบความถูกต้องของ Repo"
+                });
+            }
+        } catch (err) {
+            console.error(err);
+            githubImportSubmitBtn.textContent = "Clone Repo into Workspace";
+            githubImportSubmitBtn.disabled = false;
+            showCustomModal({
+                title: "Network Error",
+                message: "เกิดข้อผิดพลาดในการโคลนเชื่อมต่อกับหลังบ้าน"
+            });
+        }
+    };
+}
+
+// Handle selected files for attachments (e.g. text/image)
 if (fileInput) {
     fileInput.onchange = (e) => {
         const files = Array.from(e.target.files);
-        // Concatenate new files to the existing selected files
         files.forEach(file => {
-            // Prevent exact duplicates by checking name and size
             if (!selectedFiles.some(f => f.name === file.name && f.size === file.size)) {
                 selectedFiles.push(file);
             }
         });
-        // Reset file input value so same file can be selected again
         fileInput.value = "";
         renderFilePreviews();
     };
@@ -176,7 +372,6 @@ function copyToClipboard(text) {
     if (navigator.clipboard && window.isSecureContext) {
         return navigator.clipboard.writeText(text);
     } else {
-        // Fallback using dummy element
         const textArea = document.createElement("textarea");
         textArea.value = text;
         textArea.style.position = "fixed";
@@ -207,7 +402,6 @@ async function simulateStreamingMessage(textBodyElement, fullText, model = null,
     textBodyElement.innerHTML = "";
     
     let currentText = "";
-    // Speed up typing for very long text by typing multiple characters at once
     const charsPerStep = Math.max(1, Math.floor(fullText.length / 300));
     const stepDelay = 15; // ms
     
@@ -221,7 +415,6 @@ async function simulateStreamingMessage(textBodyElement, fullText, model = null,
                 chatBox.scrollTop = chatBox.scrollHeight;
                 setTimeout(type, stepDelay);
             } else {
-                // Done typing, set final html and append badge
                 textBodyElement.innerHTML = marked.parse(fullText);
                 if (model) {
                     const badge = document.createElement("span");
@@ -256,7 +449,6 @@ function createMessageLayout(role) {
     return textBody;
 }
 
-// 🛠️ เปลี่ยนปุ่มคัดลอกจากคำว่า "Copy" เป็นไอคอนรูปแผ่นกระดาษ/กล่องซ้อนสไตล์ Markdown จริง
 function setupMessageUtilities(textBody) {
     textBody.querySelectorAll("pre").forEach((preBlock) => {
         const oldBtn = preBlock.querySelector(".copy-code-btn");
@@ -270,7 +462,6 @@ function setupMessageUtilities(textBody) {
         copyBtn.setAttribute("type", "button");
         copyBtn.title = "Copy code";
 
-        // ใส่ไอคอน SVG แผ่นกระดาษซ้อนกัน (Copy Icon) ลงไปตรงๆ
         copyBtn.innerHTML = `
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
@@ -283,7 +474,6 @@ function setupMessageUtilities(textBody) {
             e.stopPropagation();
             try {
                 await copyToClipboard(codeBlock.innerText);
-                // เมื่อก๊อปปี้สำเร็จ เปลี่ยนเป็นไอคอนติ๊กถูก (Check Icon) สั้นๆ 2 วินาที
                 copyBtn.innerHTML = `
                     <svg viewBox="0 0 24 24" fill="none" stroke="#10a37f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                         <polyline points="20 6 9 17 4 12"></polyline>
@@ -335,13 +525,27 @@ async function renderStaticMessage(role, content, model = null, tokens = 0) {
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 
+// 🛠️ Helper to render Real-time Workflow / Status progression display inside the current AI message block
+function updateWorkflowStatus(aiTextBody, text) {
+    let statusContainer = aiTextBody.querySelector(".status-badge-container");
+    if (!statusContainer) {
+        statusContainer = document.createElement("div");
+        statusContainer.className = "status-badge-container";
+        statusContainer.innerHTML = `
+            <span class="status-badge-spinner">⚙️</span>
+            <span class="status-badge-text"></span>
+        `;
+        aiTextBody.appendChild(statusContainer);
+    }
+    statusContainer.querySelector(".status-badge-text").textContent = text;
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
 
 async function sendMessage() {
     if (isTypingActive) return;
     const text = input.value.trim();
     if (text === "" && selectedFiles.length === 0) return;
 
-    // Build the user message to display, including attachments if present
     let userDisplayMessage = text;
     if (selectedFiles.length > 0) {
         const fileNames = selectedFiles.map(f => `📎 ${f.name}`).join(", ");
@@ -354,7 +558,6 @@ async function sendMessage() {
 
     renderStaticMessage("user", userDisplayMessage);
     
-    // Construct FormData to send text and files to the backend
     const formData = new FormData();
     formData.append("message", text);
     if (currentChatId) {
@@ -366,7 +569,6 @@ async function sendMessage() {
         formData.append("files", file);
     });
 
-    // Clear input field and selected files preview immediately to prevent double sending
     input.value = "";
     const filesSent = [...selectedFiles];
     selectedFiles = [];
@@ -377,28 +579,72 @@ async function sendMessage() {
     try {
         const response = await fetch(`${API_BASE}/chat`, {
             method: "POST",
+            headers: {
+                "Accept": "text/event-stream"
+            },
             body: formData
         });
 
         toggleTyping(false);
-        const data = await response.json();
-        
-        if (data.chat_id) {
-            currentChatId = data.chat_id;
-        }
-        if (data.title) {
-            chatTitle.textContent = data.title;
-        }
-        
+
         const aiTextBody = createMessageLayout("ai");
-        await simulateStreamingMessage(aiTextBody, data.reply, data.model, data.total_tokens);
+        updateWorkflowStatus(aiTextBody, "Thinking / Processing...");
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalReplyText = "";
+        let finalModel = null;
+        let finalTokens = 0;
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop(); // keep partial line in buffer
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed.startsWith("data: ")) {
+                    const jsonStr = trimmed.slice(6);
+                    try {
+                        const data = JSON.parse(jsonStr);
+                        if (data.type === "status") {
+                            updateWorkflowStatus(aiTextBody, data.message);
+                        } else if (data.type === "final") {
+                            // Remove progress indicator once final answer starts typing
+                            const statusContainer = aiTextBody.querySelector(".status-badge-container");
+                            if (statusContainer) statusContainer.remove();
+
+                            if (data.chat_id) currentChatId = data.chat_id;
+                            if (data.title) chatTitle.textContent = data.title;
+
+                            finalReplyText = data.reply;
+                            finalModel = data.model;
+                            finalTokens = data.total_tokens;
+                        } else if (data.type === "error") {
+                            const statusContainer = aiTextBody.querySelector(".status-badge-container");
+                            if (statusContainer) statusContainer.remove();
+                            aiTextBody.textContent = `⚠️ Error: ${data.message}`;
+                        }
+                    } catch (e) {
+                        console.error("Failed to parse SSE line JSON", e);
+                    }
+                }
+            }
+        }
+
+        if (finalReplyText) {
+            await simulateStreamingMessage(aiTextBody, finalReplyText, finalModel, finalTokens);
+        }
         
         loadChatHistoryList();
     } catch (error) {
         console.error(error);
         toggleTyping(false);
         renderStaticMessage("ai", "⚠️ Connection stream broke off or network timed out.");
-        // If it failed, restore files in the list so the user can retry
         if (filesSent.length > 0 && selectedFiles.length === 0) {
             selectedFiles = filesSent;
             renderFilePreviews();
@@ -406,7 +652,7 @@ async function sendMessage() {
     }
 }
 
-// Helper to display a custom gorgeous dark GUI Modal replacing native alert/confirm/prompt
+// Custom Modal Overlay system
 function showCustomModal({ title, message, showInput = false, defaultValue = "", okText = "OK", cancelText = "Cancel" }) {
     return new Promise((resolve) => {
         const modal = document.getElementById("custom-modal");
@@ -423,7 +669,6 @@ function showCustomModal({ title, message, showInput = false, defaultValue = "",
         if (showInput) {
             modalInput.classList.remove("hidden");
             modalInput.value = defaultValue;
-            // Delay focus slightly to guarantee modal rendering
             setTimeout(() => modalInput.focus(), 50);
         } else {
             modalInput.classList.add("hidden");
@@ -516,7 +761,6 @@ async function loadChatHistoryList() {
                 if (confirmDelete) deleteChatSession(item.id); 
             };
 
-            // Setup click and touch event handlers to prevent propagation on mobile
             renameBtn.onclick = handleRename;
             renameBtn.ontouchstart = (e) => e.stopPropagation();
             renameBtn.ontouchend = handleRename;
@@ -551,7 +795,6 @@ input.onkeydown = (e) => { if (e.key === "Enter") sendMessage(); };
 // Tap anywhere in main container to automatically close the sidebar on mobile devices
 const dismissSidebarOnMobile = (e) => {
     if (window.innerWidth <= 768 && !sidebar.classList.contains("closed")) {
-        // Do not close if the click originated on the open button itself
         if (e.target.closest("#open-sidebar-btn")) return;
         sidebar.classList.add("closed");
         openSidebarBtn.classList.remove("hidden");
@@ -563,7 +806,6 @@ if (mainContainer) {
     mainContainer.addEventListener("touchstart", dismissSidebarOnMobile, { passive: true });
 }
 
-// On mobile, start with the sidebar closed so the main chat is visible
 if (window.innerWidth <= 768) {
     sidebar.classList.add("closed");
     openSidebarBtn.classList.remove("hidden");

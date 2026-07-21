@@ -115,6 +115,10 @@ class IDEAgentRunRequest(BaseModel):
     instruction: str
     max_iterations: Optional[int] = 10
 
+class GitHubCloneRequest(BaseModel):
+    repo_url: str
+    token: Optional[str] = None
+
 class ReadFileRequest(BaseModel):
     filepath: str
 
@@ -265,11 +269,61 @@ async def chat_endpoint(
         memory_context = "\n".join([f"- {f}" for f in memories_facts])
         injected_message = f"[ข้อมูลความจำถาวรเกี่ยวกับผู้ใช้:\n{memory_context}]\n\nคำสั่งปัจจุบัน: {agent_message}"
     
+    accept_header = request.headers.get("accept", "")
+
+    if "text/event-stream" in accept_header:
+        from fastapi.responses import StreamingResponse
+
+        async def event_generator():
+            queue = asyncio.Queue()
+
+            async def status_cb(msg: str):
+                await queue.put({"type": "status", "message": msg})
+
+            async def run_agent_task():
+                try:
+                    res = await agent.get_response(injected_message, status_callback=status_cb)
+
+                    # Add result to messages history chain and save
+                    messages.append({
+                        "role": "ai",
+                        "content": res["reply"],
+                        "model": res["model"],
+                        "total_tokens": res["total_tokens"]
+                    })
+                    await db_helper.save_chat_history(cid, title, messages)
+
+                    # Extract memory in background
+                    background_tasks.add_task(extract_and_save_memory, message, res["reply"])
+
+                    # Send final event
+                    await queue.put({
+                        "type": "final",
+                        "chat_id": cid,
+                        "title": title,
+                        "reply": res["reply"],
+                        "model": res["model"],
+                        "total_tokens": res["total_tokens"]
+                    })
+                except Exception as e:
+                    await queue.put({"type": "error", "message": str(e)})
+                finally:
+                    await queue.put(None)
+
+            # Spawn agent runner task
+            asyncio.create_task(run_agent_task())
+
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    # Standard JSON fallback for backward compatibility / tests
     result = await agent.get_response(injected_message)
     
-    # Append AI reply directly to the message chain instead of re-fetching from the database.
-    # This guarantees that the message list is kept intact and updated sequentially,
-    # avoiding any transient state read/write delays or query desynchronization.
     messages.append({
         "role": "ai",
         "content": result["reply"],
@@ -278,7 +332,6 @@ async def chat_endpoint(
     })
 
     await db_helper.save_chat_history(cid, title, messages)
-    
     background_tasks.add_task(extract_and_save_memory, message, result["reply"])
     
     return {
@@ -365,3 +418,87 @@ async def api_write_file(req: WriteFileRequest):
 @app.post("/api/tools/list_directory", dependencies=[Depends(verify_api_token)])
 async def api_list_directory(req: ListDirectoryRequest):
     return list_directory_tool(req.path)
+
+# ==============================================================================
+# WEB-BASED AI IDE ENDPOINTS: FILE UPLOAD & GITHUB IMPORT
+# ==============================================================================
+
+@app.post("/api/upload-file")
+async def api_upload_file(file: UploadFile = File(...)):
+    """Saves an uploaded file directly into the workspace directory."""
+    try:
+        from agent.tools import clean_path, ensure_workspace
+        ws = ensure_workspace()
+        filename = file.filename
+        if not filename:
+            raise HTTPException(status_code=400, detail="Filename missing")
+
+        # Clean path to ensure it remains bounded inside workspace
+        target_path = clean_path(filename)
+
+        # Ensure target directory hierarchy exists
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+
+        content = await file.read()
+        with open(target_path, "wb") as f:
+            f.write(content)
+
+        return {"status": "success", "message": f"Successfully uploaded {filename} to workspace."}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/github/repos")
+async def api_github_repos(request: Request):
+    """Fetches user repositories from GitHub using a Personal Access Token provided in headers."""
+    token = request.headers.get("X-GitHub-Token", "").strip()
+
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "MyAgent-AI"
+    }
+    if token:
+        headers["Authorization"] = f"token {token}"
+        url = "https://api.github.com/user/repos?per_page=100&sort=updated"
+    else:
+        return {"status": "error", "message": "GitHub Personal Access Token is required."}
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                repos = resp.json()
+                formatted_repos = [
+                    {
+                        "name": r.get("name"),
+                        "full_name": r.get("full_name"),
+                        "clone_url": r.get("clone_url"),
+                        "private": r.get("private"),
+                        "description": r.get("description")
+                    } for r in repos
+                ]
+                return {"status": "success", "repos": formatted_repos}
+            else:
+                return {"status": "error", "message": f"GitHub API error: {resp.text}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/github/clone")
+async def api_github_clone(req: GitHubCloneRequest):
+    """Clones a selected repository into the workspace, supporting authenticated private repositories if token is provided."""
+    try:
+        from agent.tools import clone_repository_tool
+        repo_url = req.repo_url
+
+        if req.token:
+            # Inject token into URL for authenticated cloning: https://<token>@github.com/...
+            match = re.match(r"https://(github\.com/.*)", repo_url)
+            if match:
+                repo_url = f"https://{req.token}@{match.group(1)}"
+
+        res = clone_repository_tool(repo_url)
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

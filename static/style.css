@@ -395,3 +395,82 @@ button:focus, input:focus {
 .primary-btn:hover {
     background-color: #0d8a6b;
 }
+
+/* ==============================================================================
+   WEB-BASED AI IDE NEW COMPONENTS STYLING
+   ============================================================================== */
+
+/* Attachment Menu Popup */
+.attachment-popup-menu {
+    position: absolute;
+    bottom: 52px;
+    left: 8px;
+    background-color: #2a2b36;
+    border: 1px solid #4a4b56;
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    padding: 6px;
+    z-index: 1002;
+    width: 210px;
+}
+.attachment-popup-menu.hidden {
+    display: none !important;
+}
+.attachment-popup-menu .menu-item {
+    background: transparent;
+    border: none;
+    color: var(--text-main);
+    padding: 10px 12px;
+    text-align: left;
+    font-size: 13.5px;
+    cursor: pointer;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    transition: background-color 0.15s ease;
+    width: 100%;
+}
+.attachment-popup-menu .menu-item:hover {
+    background-color: var(--hover-bg);
+}
+
+/* Workflow Status Display Badge inside AI Messages */
+.status-badge-container {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background-color: #1e1f29;
+    border: 1px solid #4a4b56;
+    border-radius: 20px;
+    padding: 6px 14px;
+    font-size: 13px;
+    color: #58a6ff;
+    margin-bottom: 12px;
+}
+.status-badge-spinner {
+    animation: spin-wheel 1.2s linear infinite;
+    display: inline-block;
+}
+@keyframes spin-wheel {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Drop-down container inside modals */
+.modal-select {
+    width: 100%;
+    padding: 10px 14px;
+    background-color: #1e1f29;
+    border: 1.5px solid #4a4b56;
+    border-radius: 8px;
+    color: #ffffff;
+    font-size: 14.5px;
+    outline: none;
+    transition: border-color 0.15s ease;
+    cursor: pointer;
+}
+.modal-select:focus {
+    border-color: #10a37f;
+}
