@@ -16,8 +16,8 @@ class ChatAgent:
         self.openai_key = os.getenv("OPENAI_API_KEY", "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")
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY", "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")
 
-    async def get_response(self, prompt: str, status_callback=None) -> dict:
-        """ระบบสลับสมองข้ามค่ายอัตโนมัติพร้อมระบบ Tool Calling (Function Calling) ของ Groq และ OpenAI"""
+    async def get_response(self, prompt: str, history: list = None, status_callback=None) -> dict:
+        """ระบบสลับสมองข้ามค่ายอัตโนมัติพร้อมระบบ Tool Calling (Function Calling) และ Sliding Window History"""
         
         async def trigger_status(msg: str):
             if status_callback:
@@ -31,16 +31,26 @@ class ChatAgent:
         system_message = {
             "role": "system",
             "content": (
-                "คุณคือ 'MyAgent' บอตผู้ช่วยพัฒนาซอฟต์แวร์และการเขียนโค้ดอัจฉริยะ (IDE Assistant) "
-                "คุณมีสิทธิ์เข้าถึง ทำงาน แก้ไข อ่าน และจัดการไฟล์ต่าง ๆ ใน Workspace ผ่านเครื่องมือ (Tools) ที่มีให้ "
-                "หากผู้ใช้สั่งให้อ่านไฟล์, เขียนไฟล์, ดูรายการไฟล์, หรือกระทำการใด ๆ ที่เกี่ยวข้องกับ Workspace "
-                "คุณต้องเรียกใช้ Tool ที่เหมาะสมเสมอ ห้ามปฏิเสธหรือบอกว่าไม่สามารถเข้าถึงไฟล์ได้เด็ดขาด! "
-                "เมื่อคุณรันเครื่องมือเสร็จเรียบร้อยและได้รับผลลัพธ์แล้ว ให้สรุปคำตอบให้ผู้ใช้อย่างชัดเจน ถูกต้อง และเป็นมิตร"
+                "คุณคือ AI IDE Agent ที่มี Tools สำหรับจัดการไฟล์และ Git "
+                "หากผู้ใช้สั่งให้ Clone Repo, อ่านไฟล์, หรือดูรายชื่อไฟล์ คุณต้องเรียกใช้ Tool "
+                "(`git_clone`, `list_directory`, `read_file`, `patch_file`, `write_file`, `execute_command`) จริงๆ เท่านั้น "
+                "**ห้ามเขียนคำอธิบายคำสั่ง Terminal หรือจำลองผลลัพธ์ขึ้นมาเองเด็ดขาด** "
+                "คุณมีสิทธิ์เข้าถึง ทำงาน แก้ไข อ่าน และจัดการไฟล์ต่าง ๆ ใน Workspace ผ่านเครื่องมือ (Tools) ที่มีให้ครบถ้วน "
+                "หลังจากรันเครื่องมือเสร็จเรียบร้อยและได้รับผลลัพธ์แล้ว ให้สรุปคำตอบให้ผู้ใช้อย่างชัดเจน ถูกต้อง และเป็นมิตร"
             )
         }
 
-        user_message = {"role": "user", "content": prompt}
-        messages = [system_message, user_message]
+        # Build message history with role translation (user / assistant)
+        formatted_history = []
+        if history:
+            for msg in history:
+                role = "assistant" if msg.get("role") in ["ai", "assistant"] else "user"
+                formatted_history.append({"role": role, "content": msg.get("content") or ""})
+        else:
+            formatted_history.append({"role": "user", "content": prompt})
+
+        # Combine with system message
+        messages = [system_message] + formatted_history
 
         tools_schema = [
             {

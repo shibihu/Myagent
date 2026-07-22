@@ -271,6 +271,9 @@ async def chat_endpoint(
     
     accept_header = request.headers.get("accept", "")
 
+    # Slicing Window: slice history to only send last 6 messages for optimized token usage
+    sliding_history = messages[-6:] if len(messages) > 6 else messages
+
     if "text/event-stream" in accept_header:
         from fastapi.responses import StreamingResponse
 
@@ -282,7 +285,7 @@ async def chat_endpoint(
 
             async def run_agent_task():
                 try:
-                    res = await agent.get_response(injected_message, status_callback=status_cb)
+                    res = await agent.get_response(injected_message, history=sliding_history, status_callback=status_cb)
 
                     # Add result to messages history chain and save
                     messages.append({
@@ -322,8 +325,8 @@ async def chat_endpoint(
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     # Standard JSON fallback for backward compatibility / tests
-    result = await agent.get_response(injected_message)
-    
+    result = await agent.get_response(injected_message, history=sliding_history)
+
     messages.append({
         "role": "ai",
         "content": result["reply"],
