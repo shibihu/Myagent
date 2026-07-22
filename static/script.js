@@ -563,20 +563,116 @@ async function renderStaticMessage(role, content, model = null, tokens = 0) {
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-// 🛠️ Helper to render Real-time Workflow / Status progression display inside the current AI message block
-function updateWorkflowStatus(aiTextBody, text) {
-    let statusContainer = aiTextBody.querySelector(".status-badge-container");
-    if (!statusContainer) {
-        statusContainer = document.createElement("div");
-        statusContainer.className = "status-badge-container";
-        statusContainer.innerHTML = `
-            <span class="status-badge-spinner">⚙️</span>
-            <span class="status-badge-text"></span>
-        `;
-        aiTextBody.appendChild(statusContainer);
+// Helper to determine operation category for workflow badge color-coding
+function getOperationCategory(text) {
+    const lower = text.toLowerCase();
+    if (lower.includes("git clone") || lower.includes("cloning repository") || lower.includes("checking out branch") || lower.includes("pulling updates") || lower.includes("git status") || lower.includes("checking git status")) {
+        return { class: "op-git", label: "GIT" };
     }
-    statusContainer.querySelector(".status-badge-text").textContent = text;
+    if (lower.includes("reading file") || lower.includes("updating code") || lower.includes("patching file") || lower.includes("write_file") || lower.includes("read_file")) {
+        return { class: "op-file", label: "FILE" };
+    }
+    if (lower.includes("running command") || lower.includes("running script") || lower.includes("executing") || lower.includes("command")) {
+        return { class: "op-terminal", label: "EXEC" };
+    }
+    return { class: "op-thinking", label: "THINK" };
+}
+
+// 🛠️ Redesigned Helper to render real-time collapsible Execution thought drawer
+function updateWorkflowStatus(aiTextBody, text) {
+    let drawer = aiTextBody.querySelector(".workflow-drawer");
+    if (!drawer) {
+        drawer = document.createElement("div");
+        drawer.className = "workflow-drawer";
+        drawer.innerHTML = `
+            <div class="workflow-drawer-header">
+                <div class="workflow-drawer-header-left">
+                    <span class="workflow-badge op-thinking">
+                        <span class="status-pulse-dot"></span>
+                        <span class="workflow-badge-label">THINK</span>
+                    </span>
+                    <span class="workflow-text">Thinking / Processing...</span>
+                </div>
+                <div class="workflow-chevron">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                </div>
+            </div>
+            <div class="workflow-details">
+                <ul class="workflow-timeline"></ul>
+            </div>
+        `;
+
+        aiTextBody.appendChild(drawer);
+
+        // Expansion toggle
+        const header = drawer.querySelector(".workflow-drawer-header");
+        const details = drawer.querySelector(".workflow-details");
+        const chevron = drawer.querySelector(".workflow-chevron");
+        header.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            details.classList.toggle("expanded");
+            chevron.classList.toggle("expanded");
+        };
+    }
+
+    const details = drawer.querySelector(".workflow-details");
+    const badge = drawer.querySelector(".workflow-badge");
+    const badgeLabel = drawer.querySelector(".workflow-badge-label");
+    const textLabel = drawer.querySelector(".workflow-text");
+    const timeline = drawer.querySelector(".workflow-timeline");
+
+    const category = getOperationCategory(text);
+
+    badge.className = `workflow-badge ${category.class}`;
+    badgeLabel.textContent = category.label;
+    textLabel.textContent = text;
+    textLabel.title = text;
+
+    // Add unique step to timeline logs
+    const existingItems = Array.from(timeline.querySelectorAll(".workflow-timeline-item-text"));
+    const isDuplicate = existingItems.some(item => item.textContent === text);
+
+    if (!isDuplicate) {
+        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const li = document.createElement("li");
+        li.className = "workflow-timeline-item";
+        li.innerHTML = `
+            <span class="workflow-timeline-item-time">${timeStr}</span>
+            <span class="workflow-timeline-item-text"></span>
+        `;
+        li.querySelector(".workflow-timeline-item-text").textContent = text;
+        timeline.appendChild(li);
+
+        details.scrollTop = details.scrollHeight;
+    }
+
     chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+// 🛠️ Transition active pulsing workflow badge into compact Completed indicator on success
+function completeWorkflowStatus(aiTextBody) {
+    const drawer = aiTextBody.querySelector(".workflow-drawer");
+    if (!drawer) return;
+
+    const badge = drawer.querySelector(".workflow-badge");
+    const badgeLabel = drawer.querySelector(".workflow-badge-label");
+    const textLabel = drawer.querySelector(".workflow-text");
+    const details = drawer.querySelector(".workflow-details");
+    const chevron = drawer.querySelector(".workflow-chevron");
+    const pulseDot = drawer.querySelector(".status-pulse-dot");
+
+    badge.className = "workflow-badge op-completed";
+    badgeLabel.textContent = "DONE";
+    if (pulseDot) pulseDot.remove();
+
+    textLabel.textContent = "Execution completed successfully";
+
+    // Automatically collapse detailed steps
+    details.classList.remove("expanded");
+    chevron.classList.remove("expanded");
 }
 
 async function sendMessage() {
@@ -628,7 +724,7 @@ async function sendMessage() {
         toggleTyping(false);
 
         const aiTextBody = createMessageLayout("ai");
-        updateWorkflowStatus(aiTextBody, "Thinking / Processing...");
+        updateWorkflowStatus(aiTextBody, "Thinking / Processing... ");
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -654,9 +750,7 @@ async function sendMessage() {
                         if (data.type === "status") {
                             updateWorkflowStatus(aiTextBody, data.message);
                         } else if (data.type === "final") {
-                            // Remove progress indicator once final answer starts typing
-                            const statusContainer = aiTextBody.querySelector(".status-badge-container");
-                            if (statusContainer) statusContainer.remove();
+                            completeWorkflowStatus(aiTextBody);
 
                             if (data.chat_id) currentChatId = data.chat_id;
                             if (data.title) chatTitle.textContent = data.title;
@@ -665,9 +759,19 @@ async function sendMessage() {
                             finalModel = data.model;
                             finalTokens = data.total_tokens;
                         } else if (data.type === "error") {
-                            const statusContainer = aiTextBody.querySelector(".status-badge-container");
-                            if (statusContainer) statusContainer.remove();
-                            aiTextBody.textContent = `⚠️ Error: ${data.message}`;
+                            const badge = aiTextBody.querySelector(".workflow-badge");
+                            const badgeLabel = aiTextBody.querySelector(".workflow-badge-label");
+                            const textLabel = aiTextBody.querySelector(".workflow-text");
+                            const pulseDot = aiTextBody.querySelector(".status-pulse-dot");
+                            if (badge) {
+                                badge.className = "workflow-badge";
+                                badge.style.backgroundColor = "#ef4444";
+                                badgeLabel.textContent = "FAIL";
+                                if (pulseDot) pulseDot.remove();
+                                textLabel.textContent = `Error: ${data.message}`;
+                            } else {
+                                aiTextBody.textContent = `⚠️ Error: ${data.message}`;
+                            }
                         }
                     } catch (e) {
                         console.error("Failed to parse SSE line JSON", e);
