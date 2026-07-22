@@ -85,17 +85,66 @@ const mcpCancelBtn = document.getElementById("mcp-cancel-btn");
 const mcpSaveBtn = document.getElementById("mcp-save-btn");
 const mcpConfigTextarea = document.getElementById("mcp-config-textarea");
 
+// Token & Context Spacing/Indicator
+const chatMessageCountBadge = document.getElementById("chat-message-count-badge");
+
 let currentChatId = null;
 let isTypingActive = false;
 let isWebSearchEnabled = false;
 let selectedFiles = [];
 let currentChatMessages = [];
 
+// 🛠️ Thai-friendly Toast Notification System with Slide animation
+function showToast(message, type = "success") {
+    let container = document.getElementById("toast-container");
+    if (!container) {
+        container = document.createElement("div");
+        container.id = "toast-container";
+        container.className = "toast-container";
+        document.body.appendChild(container);
+    }
+
+    const toast = document.createElement("div");
+    toast.className = `toast toast-${type}`;
+
+    let icon = "✓";
+    if (type === "error") {
+        icon = "⚠️";
+    }
+
+    toast.innerHTML = `
+        <span style="font-size:16px;">${icon}</span>
+        <span>${message}</span>
+    `;
+
+    container.appendChild(toast);
+
+    setTimeout(() => {
+        toast.classList.add("toast-fade-out");
+        setTimeout(() => {
+            toast.remove();
+        }, 200);
+    }, 4000);
+}
+
+// Update the Top Bar messages indicator badge
+function updateMessageCountBadge() {
+    if (!chatMessageCountBadge) return;
+    const count = currentChatMessages.length;
+    chatMessageCountBadge.textContent = `${count} ข้อความ`;
+    if (count === 0) {
+        chatMessageCountBadge.classList.add("hidden");
+    } else {
+        chatMessageCountBadge.classList.remove("hidden");
+    }
+}
+
 // Save active session state to localStorage
 function saveChatToLocalStorage() {
     localStorage.setItem("myagent_chat_history", JSON.stringify(currentChatMessages));
     localStorage.setItem("myagent_chat_id", currentChatId || "");
     localStorage.setItem("myagent_chat_title", chatTitle.textContent || "ChatGPT 4o");
+    updateMessageCountBadge();
 }
 
 // Load active session state from localStorage on page refresh
@@ -116,6 +165,7 @@ function loadChatFromLocalStorage() {
             });
             console.log("Restored chat history from localStorage");
         }
+        updateMessageCountBadge();
     } catch (e) {
         console.error("Failed to load chat history from localStorage", e);
     }
@@ -163,22 +213,13 @@ if (ideFileUploadInput) {
             });
             const data = await resp.json();
             if (resp.status === 200 || data.status === "success") {
-                showCustomModal({
-                    title: "Upload Successful",
-                    message: `ไฟล์ ${file.name} ได้รับการอัปโหลดเซฟลงใน Workspace เรียบร้อยแล้ว!`
-                });
+                showToast("อัปโหลดไฟล์ลงใน Workspace สำเร็จ!", "success");
             } else {
-                showCustomModal({
-                    title: "Upload Failed",
-                    message: `ไม่สามารถอัปโหลดไฟล์ได้: ${data.detail || "Unknown error"}`
-                });
+                showToast(`ไม่สามารถอัปโหลดไฟล์ได้: ${data.detail || "ข้อผิดพลาดระบบ"}`, "error");
             }
         } catch (err) {
             console.error(err);
-            showCustomModal({
-                title: "Upload Error",
-                message: "เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์หลังบ้าน"
-            });
+            showToast("เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์", "error");
         }
     };
 }
@@ -210,10 +251,7 @@ if (githubConnectBtn) {
     githubConnectBtn.onclick = async () => {
         const token = githubTokenInput.value.trim();
         if (!token) {
-            showCustomModal({
-                title: "Authentication Error",
-                message: "กรุณากรอก GitHub Personal Access Token"
-            });
+            showToast("กรุณากรอก GitHub Personal Access Token", "error");
             return;
         }
 
@@ -246,20 +284,15 @@ if (githubConnectBtn) {
                 });
 
                 githubReposSection.classList.remove("hidden");
+                showToast("เชื่อมต่อบัญชี GitHub สำเร็จ!", "success");
             } else {
-                showCustomModal({
-                    title: "Connection Failed",
-                    message: data.message || "ไม่สามารถเชื่อมต่อ GitHub ได้ ตรวจสอบ Token ของคุณอีกครั้ง"
-                });
+                showToast("ไม่สามารถดึงข้อมูล Repositories ได้ ตรวจสอบ Token ของคุณอีกครั้ง", "error");
             }
         } catch (err) {
             console.error(err);
             githubConnectBtn.textContent = "Connect GitHub Account";
             githubConnectBtn.disabled = false;
-            showCustomModal({
-                title: "Network Error",
-                message: "เชื่อมต่อหลังบ้านล้มเหลว กรุณาลองใหม่อีกครั้ง"
-            });
+            showToast("เชื่อมต่อเซิร์ฟเวอร์หลักล้มเหลว", "error");
         }
     };
 }
@@ -293,10 +326,7 @@ if (githubImportSubmitBtn) {
 
             if (data.status === "success") {
                 const repoName = selectedCloneUrl.split('/').pop().replace('.git', '');
-                showCustomModal({
-                    title: "Import Successful",
-                    message: `โคลน Repository "${repoName}" ลงใน Workspace สำเร็จแล้ว! กำลังส่งสัญญาณแจ้งเตือนระบบ...`
-                });
+                showToast(`โคลน Repository "${repoName}" ลงใน Workspace สำเร็จ!`, "success");
 
                 // Automatically notify the AI agent with a system hidden message to update context
                 setTimeout(() => {
@@ -304,19 +334,13 @@ if (githubImportSubmitBtn) {
                     sendMessage();
                 }, 800);
             } else {
-                showCustomModal({
-                    title: "Import Failed",
-                    message: data.message || "โคลนล้มเหลว ตรวจสอบความถูกต้องของ Repo"
-                });
+                showToast(data.message || "โคลน Repository ล้มเหลว", "error");
             }
         } catch (err) {
             console.error(err);
             githubImportSubmitBtn.textContent = "Clone Repo into Workspace";
             githubImportSubmitBtn.disabled = false;
-            showCustomModal({
-                title: "Network Error",
-                message: "เกิดข้อผิดพลาดในการโคลนเชื่อมต่อกับหลังบ้าน"
-            });
+            showToast("เกิดข้อผิดพลาดในการส่งข้อมูลโคลนเซิร์ฟเวอร์", "error");
         }
     };
 }
@@ -716,10 +740,7 @@ if (mcpSaveBtn) {
         try {
             JSON.parse(rawText);
         } catch (e) {
-            showCustomModal({
-                title: "Syntax Error",
-                message: `โครงสร้าง JSON ไม่ถูกต้อง: ${e.message}`
-            });
+            showToast(`โครงสร้าง JSON ไม่ถูกต้อง: ${e.message}`, "error");
             return;
         }
 
@@ -742,24 +763,15 @@ if (mcpSaveBtn) {
 
             if (resp.status === 200 || data.status === "success") {
                 mcpModal.classList.add("hidden");
-                showCustomModal({
-                    title: "Save Successful",
-                    message: "บันทึกการตั้งค่า MCP Server สำเร็จแล้ว!"
-                });
+                showToast("บันทึกการตั้งค่า MCP Server สำเร็จ!", "success");
             } else {
-                showCustomModal({
-                    title: "Save Failed",
-                    message: `ไม่สามารถบันทึกได้: ${data.detail || "Unknown error"}`
-                });
+                showToast(`ไม่สามารถบันทึกได้: ${data.detail || "ข้อผิดพลาดระบบ"}`, "error");
             }
         } catch (err) {
             console.error(err);
             mcpSaveBtn.textContent = "Save Config";
             mcpSaveBtn.disabled = false;
-            showCustomModal({
-                title: "Network Error",
-                message: "ไม่สามารถเชื่อมต่อเพื่อบันทึกไฟล์คอนฟิกได้"
-            });
+            showToast("ไม่สามารถเชื่อมต่อเพื่อบันทึกได้", "error");
         }
     };
 }
@@ -861,6 +873,7 @@ async function sendMessage() {
                             } else {
                                 aiTextBody.textContent = `⚠️ Error: ${data.message}`;
                             }
+                            showToast(`ระบบติดขัด: ${data.message}`, "error");
                         }
                     } catch (e) {
                         console.error("Failed to parse SSE line JSON", e);
@@ -885,6 +898,7 @@ async function sendMessage() {
         console.error(error);
         toggleTyping(false);
         renderStaticMessage("ai", "⚠️ Connection stream broke off or network timed out.");
+        showToast("ขาดการเชื่อมต่อสายธารข้อมูลหลังบ้าน", "error");
         if (filesSent.length > 0 && selectedFiles.length === 0) {
             selectedFiles = filesSent;
             renderFilePreviews();

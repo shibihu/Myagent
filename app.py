@@ -274,8 +274,8 @@ async def chat_endpoint(
     
     accept_header = request.headers.get("accept", "")
 
-    # Slicing Window: slice history to only send last 6 messages for optimized token usage
-    sliding_history = messages[-6:] if len(messages) > 6 else messages
+    # Slicing Window: slice history to only send last 10 messages for optimized token usage
+    sliding_history = messages[-10:] if len(messages) > 10 else messages
 
     if "text/event-stream" in accept_header:
         from fastapi.responses import StreamingResponse

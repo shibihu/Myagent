@@ -630,3 +630,79 @@ button:focus, input:focus {
 .workflow-timeline-item-text {
     word-break: break-all;
 }
+
+/* ==============================================================================
+   TOAST NOTIFICATIONS & CLEAN CHAT LAYOUT REFINEMENTS
+   ============================================================================== */
+
+/* Floating Toast Containers */
+.toast-container {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 10005;
+    pointer-events: none;
+}
+
+.toast {
+    background-color: #2a2b36;
+    border: 1px solid #4a4b56;
+    color: #ffffff;
+    padding: 12px 18px;
+    border-radius: 8px;
+    font-size: 13.5px;
+    font-weight: 500;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    animation: toast-slide-in 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
+    pointer-events: auto;
+    transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+    max-width: 320px;
+}
+
+.toast.toast-error {
+    border-color: #ef4444;
+    color: #fca5a5;
+    background-color: #3b1e1e;
+}
+
+.toast.toast-success {
+    border-color: #10a37f;
+    color: #a7f3d0;
+    background-color: #1a3026;
+}
+
+@keyframes toast-slide-in {
+    from { transform: translateX(120%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+.toast.toast-fade-out {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.95);
+}
+
+/* Clean Chat Spacing Adjustments */
+@media (max-width: 768px) {
+    .message-row {
+        padding: 16px 12px !important;
+    }
+    .message-content {
+        gap: 10px !important;
+    }
+    .avatar {
+        width: 22px !important;
+        height: 22px !important;
+        font-size: 10px !important;
+        margin-top: 1px !important;
+    }
+    .text-body {
+        font-size: 14.5px !important;
+        line-height: 1.5 !important;
+    }
+}

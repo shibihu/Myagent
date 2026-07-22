@@ -31,12 +31,12 @@ class ChatAgent:
         system_message = {
             "role": "system",
             "content": (
-                "คุณคือ AI IDE Agent ที่มี Tools สำหรับจัดการไฟล์และ Git "
+                "คุณคือ AI IDE Agent ที่มี Tools จัดการไฟล์และ Git "
                 "หากผู้ใช้สั่งให้ Clone Repo, อ่านไฟล์, หรือดูรายชื่อไฟล์ คุณต้องเรียกใช้ Tool "
                 "(`git_clone`, `list_directory`, `read_file`, `patch_file`, `write_file`, `execute_command`) จริงๆ เท่านั้น "
                 "**ห้ามเขียนคำอธิบายคำสั่ง Terminal หรือจำลองผลลัพธ์ขึ้นมาเองเด็ดขาด** "
-                "คุณมีสิทธิ์เข้าถึง ทำงาน แก้ไข อ่าน และจัดการไฟล์ต่าง ๆ ใน Workspace ผ่านเครื่องมือ (Tools) ที่มีให้ครบถ้วน "
-                "หลังจากรันเครื่องมือเสร็จเรียบร้อยและได้รับผลลัพธ์แล้ว ให้สรุปคำตอบให้ผู้ใช้อย่างชัดเจน ถูกต้อง และเป็นมิตร"
+                "คุณมีสิทธิ์เข้าถึง แก้ไข อ่าน และจัดการไฟล์ใน Workspace ผ่านเครื่องมือ (Tools) ที่มีให้ "
+                "หลังรันเครื่องมือเสร็จสิ้น ให้สรุปคำตอบให้ผู้ใช้อย่างชัดเจนและเป็นมิตร"
             )
         }
 
@@ -285,7 +285,8 @@ class ChatAgent:
                             "messages": current_messages,
                             "tools": tools_schema,
                             "tool_choice": "auto",
-                            "temperature": 0.5
+                            "temperature": 0.5,
+                            "max_tokens": 2048
                         }
 
                         response = await client.post(
@@ -397,7 +398,10 @@ class ChatAgent:
                                 "parts": [{"text": system_message["content"]}]
                             },
                             "contents": gemini_contents,
-                            "tools": gemini_tools
+                            "tools": gemini_tools,
+                            "generationConfig": {
+                                "maxOutputTokens": 2048
+                            }
                         }
 
                         response = await client.post(
@@ -485,7 +489,8 @@ class ChatAgent:
                             "messages": current_messages,
                             "tools": tools_schema,
                             "tool_choice": "auto",
-                            "temperature": 0.5
+                            "temperature": 0.5,
+                            "max_tokens": 2048
                         }
 
                         response = await client.post(
@@ -573,7 +578,8 @@ class ChatAgent:
                             "messages": current_messages,
                             "tools": tools_schema,
                             "tool_choice": "auto",
-                            "temperature": 0.5
+                            "temperature": 0.5,
+                            "max_tokens": 2048
                         }
 
                         response = await client.post(
@@ -649,7 +655,7 @@ class ChatAgent:
 
         # --- กรณีสุดท้าย: ถ้าคีย์ทั้งหมดในเครื่องไม่มี หรือล่มพร้อมกันหมด ---
         return {
-            "reply": "⚠️ [ระบบขัดข้อง]: ตอนนี้ค่าย AI ทั้งหมด (Groq, Gemini, OpenAI, OpenRouter) ติดลิมิตโควตาฟรีพร้อมกันหรือคีย์ขัดข้องครับสหาย โปรดรอให้ระบบรีเซ็ตสักครู่เด็ดเขาเด้วยนะครับ!",
+            "reply": "⚠️ [ระบบขัดข้อง]: ตอนนี้ค่าย AI ทั้งหมด (Groq, Gemini, OpenAI, OpenRouter) ติดลิมิตโควตาฟรีพร้อมกันหรือคีย์ขัดข้องครับสหาย โปรดรอให้ระบบรีเซ็ตสักครู่เด็ดขาดด้วยนะครับ!",
             "model": "All Providers Exhausted",
             "total_tokens": 0
         }

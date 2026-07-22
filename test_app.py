@@ -194,13 +194,15 @@ class AppTests(unittest.TestCase):
         async def mock_post(*args, **kwargs):
             return next(response_iterator)
 
-        with patch("httpx.AsyncClient.post", side_effect=mock_post):
-            # Run get_response
-            result = asyncio.run(agent_instance.get_response("Write a file named hello_test.txt with 'Hello from mock!'"))
+        with patch.dict(os.environ, {"GROQ_API_KEY": "mock_key"}):
+            agent_instance = ChatAgent() # reload keys
+            with patch("httpx.AsyncClient.post", side_effect=mock_post):
+                # Run get_response
+                result = asyncio.run(agent_instance.get_response("Write a file named hello_test.txt with 'Hello from mock!'"))
 
-            # Assertions
-            self.assertEqual(result["model"], "Groq (Llama-3.3-70b)")
-            self.assertEqual(result["reply"], "I have successfully written the file for you.")
+                # Assertions
+                self.assertEqual(result["model"], "Groq (Llama-3.3-70b)")
+                self.assertEqual(result["reply"], "I have successfully written the file for you.")
 
             # Verify file was actually written in the workspace!
             file_path = os.path.join(WORKSPACE_DIR, "hello_test.txt")
