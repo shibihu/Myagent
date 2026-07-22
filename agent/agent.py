@@ -10,11 +10,11 @@ from agent.tools import (
 
 class ChatAgent:
     def __init__(self):
-        # รวบรวม API Keys จากค่ายต่างๆ (หยิบจาก Environment หรือวางคีย์ดิบลงตรงนี้ได้เลย)
-        self.groq_key = os.getenv("GROQ_API_KEY", "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")
-        self.gemini_key = os.getenv("GEMINI_API_KEY", "AQ.Ab8RN6LMjtehi8snLtEjfb2JGB4sTC_YtKxudpKm-jg3A3Fguw")
-        self.openai_key = os.getenv("OPENAI_API_KEY", "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")
-        self.openrouter_key = os.getenv("OPENROUTER_API_KEY", "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")
+        # รวบรวม API Keys จากค่ายต่างๆ (หยิบจาก Environment ปลอดภัยไร้คีย์ดิบ)
+        self.groq_key = os.getenv("GROQ_API_KEY", "")
+        self.gemini_key = os.getenv("GEMINI_API_KEY", "")
+        self.openai_key = os.getenv("OPENAI_API_KEY", "")
+        self.openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
 
     async def get_response(self, prompt: str, history: list = None, status_callback=None) -> dict:
         """ระบบสลับสมองข้ามค่ายอัตโนมัติพร้อมระบบ Tool Calling (Function Calling) และ Sliding Window History"""
@@ -257,6 +257,20 @@ class ChatAgent:
             except Exception as e:
                 return {"status": "error", "message": str(e)}
 
+        def to_gemini_type(val):
+            """Transforms standard JSON Schema types to Gemini REST uppercase conventions."""
+            if isinstance(val, dict):
+                new_dict = {}
+                for k, v in val.items():
+                    if k == "type" and isinstance(v, str):
+                        new_dict[k] = v.upper()
+                    else:
+                        new_dict[k] = to_gemini_type(v)
+                return new_dict
+            elif isinstance(val, list):
+                return [to_gemini_type(item) for item in val]
+            return val
+
         # --- ลำดับที่ 1: ใช้ Groq เป็นหลักพร้อมการรัน Tool (Tool Execution Loop) ---
         if self.groq_key and "คีย์_" not in self.groq_key:
             try:
@@ -288,7 +302,6 @@ class ChatAgent:
                             total_tokens += result.get("usage", {}).get("total_tokens", 0)
                             message_resp = result["choices"][0]["message"]
 
-                            # Append assistant message to history
                             current_messages.append(message_resp)
 
                             tool_calls = message_resp.get("tool_calls")
@@ -297,7 +310,6 @@ class ChatAgent:
                                     tool_name = tool_call["function"]["name"]
                                     raw_args = tool_call["function"]["arguments"]
 
-                                    # Parse arguments safely
                                     if isinstance(raw_args, str):
                                         try:
                                             parsed_args = json.loads(raw_args)
@@ -306,7 +318,7 @@ class ChatAgent:
                                     else:
                                         parsed_args = raw_args or {}
 
-                                    # Provide dynamic progress/workflow status updates before invoking the tool
+                                    # Provide progress updates
                                     if tool_name == "read_file":
                                         await trigger_status(f"Reading file: {parsed_args.get('filepath', '')}...")
                                     elif tool_name == "write_file":
@@ -326,54 +338,136 @@ class ChatAgent:
                                     else:
                                         await trigger_status(f"Running tool {tool_name}...")
 
-                                    # Execute the tool
                                     tool_output = execute_local_tool(tool_name, parsed_args)
 
-                                    # Append tool result to messages
                                     current_messages.append({
                                         "role": "tool",
                                         "tool_call_id": tool_call["id"],
                                         "name": tool_name,
                                         "content": json.dumps(tool_output, ensure_ascii=False)
                                     })
-                                # Continue the loop to let Groq process tool output
                                 continue
                             else:
-                                # No tool calls, we have the final content
                                 return {
                                     "reply": message_resp.get("content") or "",
                                     "model": "Groq (Llama-3.3-70b)",
                                     "total_tokens": total_tokens
                                 }
                         else:
-                            print(f"[Brain Switcher]: Groq ติดปัญหา (Code {response.status_code}) กำลังส่งงานให้ Gemini ทำแทน...")
+                            print(f"[Brain Switcher]: Groq failed with code {response.status_code}")
                             break
             except Exception as e:
                 print(f"[Brain Switcher]: Groq เชื่อมต่อไม่ได้ -> {e}")
 
-        # --- ลำดับที่ 2: สลับไปใช้ Google Gemini อัตโนมัติ ---
+        # --- ลำดับที่ 2: สลับไปใช้ Google Gemini อัตโนมัติ (พร้อมระบบ Tool Execution Loop) ---
         if self.gemini_key and "คีย์_" not in self.gemini_key:
             try:
-                # Use gemini-2.5-flash as requested in memory guidelines
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.gemini_key}"
+                # Convert tools to Gemini REST format
+                gemini_functions = []
+                for tool in tools_schema:
+                    func_def = tool["function"]
+                    gemini_functions.append({
+                        "name": func_def["name"],
+                        "description": func_def["description"],
+                        "parameters": to_gemini_type(func_def.get("parameters", {}))
+                    })
+                gemini_tools = [{"functionDeclarations": gemini_functions}]
+
+                # Format sliding history contents
+                gemini_contents = []
+                if history:
+                    for msg in history:
+                        role = "model" if msg.get("role") in ["ai", "assistant"] else "user"
+                        gemini_contents.append({
+                            "role": role,
+                            "parts": [{"text": msg.get("content") or ""}]
+                        })
+                else:
+                    gemini_contents.append({
+                        "role": "user",
+                        "parts": [{"text": prompt}]
+                    })
+
+                max_turns = 10
                 async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.post(
-                        url,
-                        headers={"Content-Type": "application/json"},
-                        json={
-                            "contents": [{"parts": [{"text": prompt}]}]
+                    for turn in range(max_turns):
+                        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.gemini_key}"
+                        payload = {
+                            "systemInstruction": {
+                                "parts": [{"text": system_message["content"]}]
+                            },
+                            "contents": gemini_contents,
+                            "tools": gemini_tools
                         }
-                    )
-                    if response.status_code == 200:
-                        result = response.json()
-                        reply_text = result['candidates'][0]['content']['parts'][0]['text']
-                        return {
-                            "reply": reply_text,
-                            "model": "Google Gemini 2.5 Flash",
-                            "total_tokens": 0
-                        }
-                    else:
-                        print(f"[Brain Switcher]: Gemini ติดปัญหา (Code {response.status_code}) กำลังส่งงานให้ OpenAI ทำแทน...")
+
+                        response = await client.post(
+                            url,
+                            headers={"Content-Type": "application/json"},
+                            json=payload
+                        )
+
+                        if response.status_code == 200:
+                            result = response.json()
+                            candidate = result['candidates'][0]
+                            content_resp = candidate['content']
+                            parts = content_resp.get('parts', [])
+
+                            # Append assistant turn to conversation context
+                            gemini_contents.append(content_resp)
+
+                            # Scan for tool calls
+                            function_calls = [p.get("functionCall") for p in parts if p.get("functionCall")]
+
+                            if function_calls:
+                                for fc in function_calls:
+                                    tool_name = fc["name"]
+                                    args = fc.get("args", {})
+
+                                    # Provide progress updates
+                                    if tool_name == "read_file":
+                                        await trigger_status(f"Reading file: {args.get('filepath', '')}...")
+                                    elif tool_name == "write_file":
+                                        await trigger_status(f"Updating code: {args.get('filepath', '')}...")
+                                    elif tool_name == "patch_file":
+                                        await trigger_status(f"Patching file: {args.get('filepath', '')}...")
+                                    elif tool_name == "execute_command":
+                                        await trigger_status(f"Running command: {args.get('command', '')}...")
+                                    elif tool_name == "git_clone" or tool_name == "clone_repository":
+                                        await trigger_status(f"Git cloning repository: {args.get('repo_url', '')}...")
+                                    elif tool_name == "git_checkout":
+                                        await trigger_status(f"Git checking out branch: {args.get('branch_name', '')}...")
+                                    elif tool_name == "git_pull":
+                                        await trigger_status("Git pulling updates...")
+                                    elif tool_name == "git_status":
+                                        await trigger_status("Checking git status...")
+                                    else:
+                                        await trigger_status(f"Running tool {tool_name}...")
+
+                                    tool_output = execute_local_tool(tool_name, args)
+
+                                    # Append tool result response
+                                    gemini_contents.append({
+                                        "role": "function",
+                                        "parts": [{
+                                            "functionResponse": {
+                                                "name": tool_name,
+                                                "response": {
+                                                    "output": json.dumps(tool_output, ensure_ascii=False)
+                                                }
+                                            }
+                                        }]
+                                    })
+                                continue
+                            else:
+                                reply_text = parts[0].get("text", "") if parts else ""
+                                return {
+                                    "reply": reply_text,
+                                    "model": "Google Gemini 2.5 Flash",
+                                    "total_tokens": 0
+                                }
+                        else:
+                            print(f"[Brain Switcher]: Gemini failed with code {response.status_code}")
+                            break
             except Exception as e:
                 print(f"[Brain Switcher]: Gemini เชื่อมต่อไม่ได้ -> {e}")
 
@@ -408,7 +502,6 @@ class ChatAgent:
                             total_tokens += result.get("usage", {}).get("total_tokens", 0)
                             message_resp = result["choices"][0]["message"]
 
-                            # Append assistant message to history
                             current_messages.append(message_resp)
 
                             tool_calls = message_resp.get("tool_calls")
@@ -417,7 +510,6 @@ class ChatAgent:
                                     tool_name = tool_call["function"]["name"]
                                     raw_args = tool_call["function"]["arguments"]
 
-                                    # Parse arguments safely
                                     if isinstance(raw_args, str):
                                         try:
                                             parsed_args = json.loads(raw_args)
@@ -426,7 +518,7 @@ class ChatAgent:
                                     else:
                                         parsed_args = raw_args or {}
 
-                                    # Provide dynamic progress/workflow status updates before invoking the tool (OpenAI fallback)
+                                    # Provide progress updates
                                     if tool_name == "read_file":
                                         await trigger_status(f"Reading file: {parsed_args.get('filepath', '')}...")
                                     elif tool_name == "write_file":
@@ -446,60 +538,118 @@ class ChatAgent:
                                     else:
                                         await trigger_status(f"Running tool {tool_name}...")
 
-                                    # Execute the tool
                                     tool_output = execute_local_tool(tool_name, parsed_args)
 
-                                    # Append tool result to messages
                                     current_messages.append({
                                         "role": "tool",
                                         "tool_call_id": tool_call["id"],
                                         "name": tool_name,
                                         "content": json.dumps(tool_output, ensure_ascii=False)
                                     })
-                                # Continue loop
                                 continue
                             else:
-                                # No tool calls, return final response
                                 return {
                                     "reply": message_resp.get("content") or "",
                                     "model": "OpenAI (GPT-4o-Mini)",
                                     "total_tokens": total_tokens
                                 }
                         else:
-                            print(f"[Brain Switcher]: OpenAI ติดปัญหา (Code {response.status_code}) กำลังส่งงานให้ OpenRouter ทำแทน...")
+                            print(f"[Brain Switcher]: OpenAI failed with code {response.status_code}")
                             break
             except Exception as e:
                 print(f"[Brain Switcher]: OpenAI เชื่อมต่อไม่ได้ -> {e}")
 
-        # --- ลำดับที่ 4: ด่านสุดท้ายสลับไปใช้ OpenRouter (Auto-Free Models / openrouter/free) ---
+        # --- ลำดับที่ 4: ด่านสุดท้ายสลับไปใช้ OpenRouter (Auto-Free Models / openrouter/free) (พร้อมระบบ Tool Execution Loop) ---
         if self.openrouter_key and "คีย์_" not in self.openrouter_key:
             try:
+                max_turns = 10
+                current_messages = list(messages)
+                total_tokens = 0
+
                 async with httpx.AsyncClient(timeout=30.0) as client:
-                    response = await client.post(
-                        "https://openrouter.ai/api/v1/chat/completions",
-                        headers={
-                            "Authorization": f"Bearer {self.openrouter_key}",
-                            "Content-Type": "application/json"
-                        },
-                        json={
-                            "model": "openrouter/free", # Use openrouter/free model from memory guidelines
-                            "messages": [{"role": "user", "content": prompt}],
-                            "temperature": 0.7
+                    for turn in range(max_turns):
+                        payload = {
+                            "model": "openrouter/free",
+                            "messages": current_messages,
+                            "tools": tools_schema,
+                            "tool_choice": "auto",
+                            "temperature": 0.5
                         }
-                    )
-                    if response.status_code == 200:
-                        result = response.json()
-                        return {
-                            "reply": result["choices"][0]["message"]["content"],
-                            "model": "OpenRouter (Free)",
-                            "total_tokens": result.get("usage", {}).get("total_tokens", 0)
-                        }
+
+                        response = await client.post(
+                            "https://openrouter.ai/api/v1/chat/completions",
+                            headers={
+                                "Authorization": f"Bearer {self.openrouter_key}",
+                                "Content-Type": "application/json"
+                            },
+                            json=payload
+                        )
+
+                        if response.status_code == 200:
+                            result = response.json()
+                            total_tokens += result.get("usage", {}).get("total_tokens", 0)
+                            message_resp = result["choices"][0]["message"]
+
+                            current_messages.append(message_resp)
+
+                            tool_calls = message_resp.get("tool_calls")
+                            if tool_calls:
+                                for tool_call in tool_calls:
+                                    tool_name = tool_call["function"]["name"]
+                                    raw_args = tool_call["function"]["arguments"]
+
+                                    if isinstance(raw_args, str):
+                                        try:
+                                            parsed_args = json.loads(raw_args)
+                                        except Exception:
+                                            parsed_args = {}
+                                    else:
+                                        parsed_args = raw_args or {}
+
+                                    # Provide progress updates
+                                    if tool_name == "read_file":
+                                        await trigger_status(f"Reading file: {parsed_args.get('filepath', '')}...")
+                                    elif tool_name == "write_file":
+                                        await trigger_status(f"Updating code: {parsed_args.get('filepath', '')}...")
+                                    elif tool_name == "patch_file":
+                                        await trigger_status(f"Patching file: {parsed_args.get('filepath', '')}...")
+                                    elif tool_name == "execute_command":
+                                        await trigger_status(f"Running command: {parsed_args.get('command', '')}...")
+                                    elif tool_name == "git_clone" or tool_name == "clone_repository":
+                                        await trigger_status(f"Git cloning repository: {parsed_args.get('repo_url', '')}...")
+                                    elif tool_name == "git_checkout":
+                                        await trigger_status(f"Git checking out branch: {parsed_args.get('branch_name', '')}...")
+                                    elif tool_name == "git_pull":
+                                        await trigger_status("Git pulling updates...")
+                                    elif tool_name == "git_status":
+                                        await trigger_status("Checking git status...")
+                                    else:
+                                        await trigger_status(f"Running tool {tool_name}...")
+
+                                    tool_output = execute_local_tool(tool_name, parsed_args)
+
+                                    current_messages.append({
+                                        "role": "tool",
+                                        "tool_call_id": tool_call["id"],
+                                        "name": tool_name,
+                                        "content": json.dumps(tool_output, ensure_ascii=False)
+                                    })
+                                continue
+                            else:
+                                return {
+                                    "reply": message_resp.get("content") or "",
+                                    "model": "OpenRouter (Free)",
+                                    "total_tokens": total_tokens
+                                }
+                        else:
+                            print(f"[Brain Switcher]: OpenRouter failed with code {response.status_code}")
+                            break
             except Exception as e:
                 print(f"[Brain Switcher]: OpenRouter เชื่อมต่อไม่ได้ -> {e}")
 
         # --- กรณีสุดท้าย: ถ้าคีย์ทั้งหมดในเครื่องไม่มี หรือล่มพร้อมกันหมด ---
         return {
-            "reply": "⚠️ [ระบบขัดข้อง]: ตอนนี้ค่าย AI ทั้งหมด (Groq, Gemini, OpenAI, OpenRouter) ติดลิมิตโควตาฟรีพร้อมกันหรือคีย์ขัดข้องครับสหาย โปรดรอให้ระบบรีเซ็ตสักครู่เด็ดขาดนะครับ!",
+            "reply": "⚠️ [ระบบขัดข้อง]: ตอนนี้ค่าย AI ทั้งหมด (Groq, Gemini, OpenAI, OpenRouter) ติดลิมิตโควตาฟรีพร้อมกันหรือคีย์ขัดข้องครับสหาย โปรดรอให้ระบบรีเซ็ตสักครู่เด็ดเขาเด้วยนะครับ!",
             "model": "All Providers Exhausted",
             "total_tokens": 0
         }
