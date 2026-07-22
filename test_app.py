@@ -208,5 +208,33 @@ class AppTests(unittest.TestCase):
             with open(file_path, "r", encoding="utf-8") as f:
                 self.assertEqual(f.read(), "Hello from mock!")
 
+    def test_mcp_config_endpoints(self):
+        """Test active MCP config retrieval, formatting validation, and save endpoints."""
+        # 1. Test GET config returns 200
+        get_resp = self.client.get("/api/mcp/config")
+        self.assertEqual(get_resp.status_code, 200)
+        self.assertIn("mcpServers", get_resp.json())
+
+        # 2. Test POST invalid syntax JSON returns 400
+        post_bad_syntax = self.client.post("/api/mcp/config", json={"config_raw": "invalid: syntax { ]"})
+        self.assertEqual(post_bad_syntax.status_code, 400)
+        self.assertIn("Invalid JSON Syntax", post_bad_syntax.json()["detail"])
+
+        # 3. Test POST invalid structure JSON returns 400
+        post_bad_struct = self.client.post("/api/mcp/config", json={"config_raw": '{"badKey": []}'})
+        self.assertEqual(post_bad_struct.status_code, 400)
+        self.assertIn("mcpServers", post_bad_struct.json()["detail"])
+
+        # 4. Test POST valid config returns 200
+        valid_raw = '{\n  "mcpServers": {\n    "roblox-studio": {\n      "url": "http://localhost:3000"\n    }\n  }\n}'
+        post_ok = self.client.post("/api/mcp/config", json={"config_raw": valid_raw})
+        self.assertEqual(post_ok.status_code, 200)
+        self.assertEqual(post_ok.json()["status"], "success")
+
+        # 5. Verify saved changes are returned in next GET
+        verify_resp = self.client.get("/api/mcp/config")
+        self.assertEqual(verify_resp.status_code, 200)
+        self.assertIn("roblox-studio", verify_resp.json()["mcpServers"])
+
 if __name__ == "__main__":
     unittest.main()

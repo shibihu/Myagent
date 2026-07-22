@@ -119,6 +119,9 @@ class GitHubCloneRequest(BaseModel):
     repo_url: str
     token: Optional[str] = None
 
+class MCPConfigRequest(BaseModel):
+    config_raw: str
+
 class ReadFileRequest(BaseModel):
     filepath: str
 
@@ -487,6 +490,30 @@ async def api_github_repos(request: Request):
                 return {"status": "error", "message": f"GitHub API error: {resp.text}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/mcp/config")
+async def get_mcp_config_endpoint():
+    """Fetches the active MCP configuration from backend."""
+    from agent.mcp_loader import load_mcp_config
+    return load_mcp_config()
+
+@app.post("/api/mcp/config")
+async def save_mcp_config_endpoint(req: MCPConfigRequest):
+    """Validates and saves the incoming raw JSON string to mcp_config.json."""
+    from agent.mcp_loader import validate_mcp_config, CONFIG_PATH
+    validation = validate_mcp_config(req.config_raw)
+    if validation["status"] == "error":
+        raise HTTPException(status_code=400, detail=validation["message"])
+
+    try:
+        # Safe Atomic Write and Replace
+        temp_path = CONFIG_PATH + ".tmp"
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(validation["data"], f, indent=2)
+        os.replace(temp_path, CONFIG_PATH)
+        return {"status": "success", "message": "MCP configuration saved successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save config: {str(e)}")
 
 @app.post("/api/github/clone")
 async def api_github_clone(req: GitHubCloneRequest):

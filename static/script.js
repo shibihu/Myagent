@@ -77,6 +77,14 @@ const githubReposSection = document.getElementById("github-repos-section");
 const githubRepoSelect = document.getElementById("github-repo-select");
 const githubImportSubmitBtn = document.getElementById("github-import-submit-btn");
 
+// Elements for MCP Config Editor Modal
+const toggleMcpBtn = document.getElementById("toggle-mcp-btn");
+const mcpModal = document.getElementById("mcp-modal");
+const mcpCloseBtn = document.getElementById("mcp-close-btn");
+const mcpCancelBtn = document.getElementById("mcp-cancel-btn");
+const mcpSaveBtn = document.getElementById("mcp-save-btn");
+const mcpConfigTextarea = document.getElementById("mcp-config-textarea");
+
 let currentChatId = null;
 let isTypingActive = false;
 let isWebSearchEnabled = false;
@@ -673,6 +681,87 @@ function completeWorkflowStatus(aiTextBody) {
     // Automatically collapse detailed steps
     details.classList.remove("expanded");
     chevron.classList.remove("expanded");
+}
+
+// MCP modal settings trigger
+if (toggleMcpBtn && mcpModal) {
+    toggleMcpBtn.onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        mcpModal.classList.remove("hidden");
+
+        // Fetch active configuration from backend
+        try {
+            const resp = await fetch(`${API_BASE}/api/mcp/config`);
+            const data = await resp.json();
+            mcpConfigTextarea.value = JSON.stringify(data, null, 2);
+        } catch (err) {
+            console.error(err);
+            mcpConfigTextarea.value = '{\n  "mcpServers": {}\n}';
+        }
+    };
+}
+
+if (mcpCloseBtn && mcpCancelBtn && mcpModal) {
+    const closeMcp = () => { mcpModal.classList.add("hidden"); };
+    mcpCloseBtn.onclick = closeMcp;
+    mcpCancelBtn.onclick = closeMcp;
+}
+
+if (mcpSaveBtn) {
+    mcpSaveBtn.onclick = async () => {
+        const rawText = mcpConfigTextarea.value.trim();
+
+        // Quick frontend JSON parsing check
+        try {
+            JSON.parse(rawText);
+        } catch (e) {
+            showCustomModal({
+                title: "Syntax Error",
+                message: `โครงสร้าง JSON ไม่ถูกต้อง: ${e.message}`
+            });
+            return;
+        }
+
+        mcpSaveBtn.textContent = "Saving...";
+        mcpSaveBtn.disabled = true;
+
+        try {
+            const resp = await fetch(`${API_BASE}/api/mcp/config`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    config_raw: rawText
+                })
+            });
+            const data = await resp.json();
+            mcpSaveBtn.textContent = "Save Config";
+            mcpSaveBtn.disabled = false;
+
+            if (resp.status === 200 || data.status === "success") {
+                mcpModal.classList.add("hidden");
+                showCustomModal({
+                    title: "Save Successful",
+                    message: "บันทึกการตั้งค่า MCP Server สำเร็จแล้ว!"
+                });
+            } else {
+                showCustomModal({
+                    title: "Save Failed",
+                    message: `ไม่สามารถบันทึกได้: ${data.detail || "Unknown error"}`
+                });
+            }
+        } catch (err) {
+            console.error(err);
+            mcpSaveBtn.textContent = "Save Config";
+            mcpSaveBtn.disabled = false;
+            showCustomModal({
+                title: "Network Error",
+                message: "ไม่สามารถเชื่อมต่อเพื่อบันทึกไฟล์คอนฟิกได้"
+            });
+        }
+    };
 }
 
 async function sendMessage() {
