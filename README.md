@@ -1,52 +1,26 @@
-# 🤖 MyAgent - Minimal AI Chat Interface
-
-A sleek, minimal, and responsive web-based chat interface designed for interacting with an AI backend. It features real-time Markdown rendering and automatic code syntax highlighting to look exactly like GitHub's clean documentation style.
-
-## 🚀 Features
-
-*   **Real-time Chat UI:** Clean and simple message-bubble interface for both user and AI.
-*   **Markdown Support:** Uses `marked.js` to render headings, lists, bold text, and tables seamlessly.
-*   **Syntax Highlighting:** Integrated with `highlight.js` (GitHub Dark theme) to format code blocks beautifully.
-*   **GitHub Markdown Styling:** Wrapped in `github-markdown-css` for a polished, modern developer feel.
-*   **Auto-Scroll:** Automatically scrolls down to the newest message whenever the user or AI speaks.
-
-## 📂 Project Structure
-
-```text
-├── app.py              # FastAPI application entry point
-├── config.py           # Environment loading
-├── agent/              # Chat agent logic
-├── static/             # CSS and JavaScript assets
-├── templates/          # HTML templates
-├── requirements.txt    # Python dependencies
-└── .devcontainer/      # Codespaces / VS Code dev container config
-```
-
-## ▶️ Run locally
-
+# 🤖 MyAgent — Web-Based AI IDE & Autonomous Code Agent
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://python.org) [![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com) [![Vercel](https://img.shields.io/badge/Frontend-Vercel-black?logo=vercel)](https://vercel.com) [![Railway](https://img.shields.io/badge/Backend-Railway-purple?logo=railway)](https://railway.app)
+> **MyAgent** is an intelligent, full-stack Web AI IDE designed to execute real code operations, manage files in workspaces, stream real-time execution status, and sync directly with GitHub repositories.
+---
+## 🔥 Key Features
+| Feature | Description |
+| :--- | :--- |
+| **🐊 GitHub Integration** | Import repositories via OAuth, execute `git clone`, `commit`, and `push` directly from chat. |
+| **💾 Workspace File Engine** | Read, write, edit, delete, and inspect files/directories live on the backend server. |
+| **⚡ Real-time Thought Stream** | Live workflow status updates (`Git cloning...`, `Updating code...`, `Running script...`). |
+| **💻 Attachment & Import** | Dedicated UI pop-up for direct file uploads and GitHub repository importing. |
+| **📝 Persistent Chat State** | Client-side session management powered by `localStorage` for uninterrupted chats. |
+| **✈️ Multi-Model Engine** | Powered by Gemini & Groq LLMs with smart tool calling & token optimization. |
+---
+## 🐍 Tech Stack & Architecture
+* **Frontend:** Next.js / React (Hosted on Vercel)
+* **Backend:** Python FastAPI / Uvicorn (Hosted on Railway)
+* **Tooling Engine:** Custom Subprocess Git Automation & File Management Tools
+* **LLM Models:** Google Gemini 2.5 Flash / Groq (Llama 3.3 70B)
+---
+## ✈️ Quick Start (Local Setup)
+1. **Clone the repository:**
 ```bash
-python -m pip install -r requirements.txt
-python -m uvicorn app:app --reload --host 0.0.0.0 --port 8000
+ git clone [https://github.com/shibihu/Myagent.git](https://github.com/shibihu/Myagent.git)
+ cd Myagent
 ```
-
-Then open http://127.0.0.1:8000/.
-
-## ☁️ Run in GitHub Codespaces or VS Code
-
-1. Open the project in Codespaces or VS Code.
-2. If prompted, reopen in the dev container.
-3. Run:
-
-```bash
-python -m uvicorn app:app --reload --host 0.0.0.0 --port 8000
-```
-
-## 🔐 Groq API setup
-
-Create a file named `.env` in the project root with:
-
-```env
-GROQ_API_KEY=your_groq_api_key_here
-```
-
-If the key is missing, the app will still start and return a friendly message instead of crashing.
