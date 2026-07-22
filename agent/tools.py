@@ -10,6 +10,25 @@ def ensure_workspace():
     """Ensure the workspace directory exists."""
     if not os.path.exists(WORKSPACE_DIR):
         os.makedirs(WORKSPACE_DIR, exist_ok=True)
+
+    # Configure default git user identity to prevent commit errors
+    try:
+        if shutil.which("git") is not None:
+            subprocess.run(
+                'git config --global user.name "MyAgent Bot"',
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            subprocess.run(
+                'git config --global user.email "myagent@bot.local"',
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+    except Exception as e:
+        print(f"[Git Identity Config Warning]: {e}")
+
     return WORKSPACE_DIR
 
 def clean_path(filepath: str) -> str:
