@@ -81,6 +81,37 @@ let currentChatId = null;
 let isTypingActive = false;
 let isWebSearchEnabled = false;
 let selectedFiles = [];
+let currentChatMessages = [];
+
+// Save active session state to localStorage
+function saveChatToLocalStorage() {
+    localStorage.setItem("myagent_chat_history", JSON.stringify(currentChatMessages));
+    localStorage.setItem("myagent_chat_id", currentChatId || "");
+    localStorage.setItem("myagent_chat_title", chatTitle.textContent || "ChatGPT 4o");
+}
+
+// Load active session state from localStorage on page refresh
+function loadChatFromLocalStorage() {
+    try {
+        const savedHistory = localStorage.getItem("myagent_chat_history");
+        const savedId = localStorage.getItem("myagent_chat_id");
+        const savedTitle = localStorage.getItem("myagent_chat_title");
+
+        if (savedHistory) {
+            currentChatMessages = JSON.parse(savedHistory);
+            currentChatId = savedId || null;
+            chatTitle.textContent = savedTitle || "ChatGPT 4o";
+
+            chatBox.innerHTML = "";
+            currentChatMessages.forEach(m => {
+                renderStaticMessage(m.role, m.content, m.model, m.total_tokens);
+            });
+            console.log("Restored chat history from localStorage");
+        }
+    } catch (e) {
+        console.error("Failed to load chat history from localStorage", e);
+    }
+}
 
 // Toggle attachment dropdown menu
 if (attachmentBtn && attachmentMenu) {
@@ -564,6 +595,8 @@ async function sendMessage() {
     }
 
     renderStaticMessage("user", userDisplayMessage);
+    currentChatMessages.push({ role: "user", content: userDisplayMessage });
+    saveChatToLocalStorage();
     
     const formData = new FormData();
     formData.append("message", text);
@@ -644,6 +677,13 @@ async function sendMessage() {
         }
 
         if (finalReplyText) {
+            currentChatMessages.push({
+                role: "ai",
+                content: finalReplyText,
+                model: finalModel,
+                total_tokens: finalTokens
+            });
+            saveChatToLocalStorage();
             await simulateStreamingMessage(aiTextBody, finalReplyText, finalModel, finalTokens);
         }
         
@@ -789,13 +829,57 @@ async function loadChatHistoryList() {
     } catch (err) { console.error(err); }
 }
 
-async function switchChatSession(cId) { currentChatId = cId; chatBox.innerHTML = ""; const res = await fetch(`${API_BASE}/chats/${cId}`); const d = await res.json(); chatTitle.textContent = d.title; d.messages.forEach(m => renderStaticMessage(m.role, m.content, m.model, m.total_tokens)); loadChatHistoryList(); }
-async function renameChatSession(cId, title) { await fetch(`${API_BASE}/chats/${cId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) }); loadChatHistoryList(); }
-async function deleteChatSession(cId) { await fetch(`${API_BASE}/chats/${cId}`, { method: "DELETE" }); if (currentChatId === cId) { currentChatId = null; chatBox.innerHTML = ""; chatTitle.textContent = "ChatGPT 4o"; } loadChatHistoryList(); }
+async function switchChatSession(cId) {
+    currentChatId = cId;
+    chatBox.innerHTML = "";
+    const res = await fetch(`${API_BASE}/chats/${cId}`);
+    const d = await res.json();
+    chatTitle.textContent = d.title;
+    currentChatMessages = d.messages || [];
+    currentChatMessages.forEach(m => renderStaticMessage(m.role, m.content, m.model, m.total_tokens));
+    saveChatToLocalStorage();
+    loadChatHistoryList();
+}
+
+async function renameChatSession(cId, title) {
+    await fetch(`${API_BASE}/chats/${cId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) });
+    if (currentChatId === cId) {
+        chatTitle.textContent = title;
+        localStorage.setItem("myagent_chat_title", title);
+    }
+    loadChatHistoryList();
+}
+
+async function deleteChatSession(cId) {
+    await fetch(`${API_BASE}/chats/${cId}`, { method: "DELETE" });
+    if (currentChatId === cId) {
+        currentChatId = null;
+        chatBox.innerHTML = "";
+        chatTitle.textContent = "ChatGPT 4o";
+        currentChatMessages = [];
+        localStorage.removeItem("myagent_chat_history");
+        localStorage.removeItem("myagent_chat_id");
+        localStorage.removeItem("myagent_chat_title");
+    }
+    loadChatHistoryList();
+}
+
 async function loadMemoriesList() { const res = await fetch(`${API_BASE}/memory`); const d = await res.json(); memoryList.innerHTML = d.memories.length === 0 ? "<li>No memory</li>" : ""; d.memories.forEach((f, i) => { const li = document.createElement("li"); li.className = "memory-item"; li.innerHTML = `<span>${f}</span><button class="memory-delete-btn pop-btn" onclick="deleteMemoryFact(${i})">🗑️</button>`; memoryList.appendChild(li); }); }
 async function deleteMemoryFact(i) { await fetch(`${API_BASE}/memory/${i}`, { method: "DELETE" }); loadMemoriesList(); }
 
-newChatBtn.onclick = () => { if (!isTypingActive) { currentChatId = null; chatBox.innerHTML = ""; chatTitle.textContent = "ChatGPT 4o"; loadChatHistoryList(); } };
+newChatBtn.onclick = () => {
+    if (!isTypingActive) {
+        currentChatId = null;
+        chatBox.innerHTML = "";
+        chatTitle.textContent = "ChatGPT 4o";
+        currentChatMessages = [];
+        localStorage.removeItem("myagent_chat_history");
+        localStorage.removeItem("myagent_chat_id");
+        localStorage.removeItem("myagent_chat_title");
+        loadChatHistoryList();
+    }
+};
+
 button.onclick = sendMessage;
 input.onkeydown = (e) => { if (e.key === "Enter") sendMessage(); };
 
@@ -819,3 +903,4 @@ if (window.innerWidth <= 768) {
 }
 
 loadChatHistoryList();
+loadChatFromLocalStorage();
