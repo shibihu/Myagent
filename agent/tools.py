@@ -108,6 +108,11 @@ def view_dir_tool(path: str = ".") -> dict:
             if ".git" in dirs:
                 dirs.remove(".git")
 
+            for d in dirs:
+                full_p = os.path.join(root, d)
+                rel_p = os.path.relpath(full_p, ws) + "/"
+                result_tree.append(rel_p)
+
             for file in files:
                 full_p = os.path.join(root, file)
                 rel_p = os.path.relpath(full_p, ws)

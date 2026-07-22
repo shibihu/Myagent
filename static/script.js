@@ -913,12 +913,7 @@ async function loadChatHistoryList() {
             };
 
             renameBtn.onclick = handleRename;
-            renameBtn.ontouchstart = (e) => e.stopPropagation();
-            renameBtn.ontouchend = handleRename;
-
             deleteBtn.onclick = handleDelete;
-            deleteBtn.ontouchstart = (e) => e.stopPropagation();
-            deleteBtn.ontouchend = handleDelete;
             
             li.appendChild(textSpan); 
             li.appendChild(actionsDiv); 
