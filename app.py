@@ -47,6 +47,7 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+app.mount("/public", StaticFiles(directory=os.path.join(BASE_DIR, "public")), name="public")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 agent = ChatAgent()

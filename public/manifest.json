@@ -1,0 +1,17 @@
+{
+  "name": "MyAgent",
+  "short_name": "MyAgent",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#212121",
+  "theme_color": "#212121",
+  "description": "MyAgent AI - High Performance Web-based AI IDE Workspace",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/static/favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ]
+}

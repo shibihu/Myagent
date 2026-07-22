@@ -238,5 +238,11 @@ class AppTests(unittest.TestCase):
         self.assertEqual(verify_resp.status_code, 200)
         self.assertIn("roblox-studio", verify_resp.json()["mcpServers"])
 
+    def test_pwa_manifest_served(self):
+        """Verify that PWA manifest.json is correctly served at /public/manifest.json."""
+        resp = self.client.get("/public/manifest.json")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["short_name"], "MyAgent")
+
 if __name__ == "__main__":
     unittest.main()
