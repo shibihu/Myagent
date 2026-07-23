@@ -247,6 +247,10 @@ class AppTests(unittest.TestCase):
         manifest_data = resp.json()
         self.assertEqual(manifest_data.get("short_name"), "MyAgent")
         self.assertEqual(manifest_data.get("display"), "standalone")
+        self.assertEqual(manifest_data.get("description"), "An intelligent AI agent assistant")
+        self.assertEqual(len(manifest_data.get("icons")), 2)
+        self.assertEqual(manifest_data["icons"][0]["sizes"], "192x192")
+        self.assertEqual(manifest_data["icons"][1]["sizes"], "512x512")
 
         # 2. Test GET /favicon.ico
         resp_favicon = self.client.get("/favicon.ico")
