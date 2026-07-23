@@ -238,5 +238,20 @@ class AppTests(unittest.TestCase):
         self.assertEqual(verify_resp.status_code, 200)
         self.assertIn("roblox-studio", verify_resp.json()["mcpServers"])
 
+    def test_pwa_manifest_and_favicon_endpoints(self):
+        """Test that PWA manifest and favicon endpoints are served correctly."""
+        # 1. Test GET /manifest.json
+        resp = self.client.get("/manifest.json")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers.get("content-type"), "application/json")
+        manifest_data = resp.json()
+        self.assertEqual(manifest_data.get("short_name"), "MyAgent")
+        self.assertEqual(manifest_data.get("display"), "standalone")
+
+        # 2. Test GET /favicon.ico
+        resp_favicon = self.client.get("/favicon.ico")
+        self.assertEqual(resp_favicon.status_code, 200)
+        self.assertEqual(resp_favicon.headers.get("content-type"), "image/x-icon")
+
 if __name__ == "__main__":
     unittest.main()
