@@ -16,7 +16,7 @@ class ChatAgent:
         self.openai_key = os.getenv("OPENAI_API_KEY", "")
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
 
-    async def get_response(self, prompt: str, history: list = None, status_callback=None) -> dict:
+    async def get_response(self, prompt: str, history: list = None, status_callback=None, request_context: dict = None) -> dict:
         """ระบบสลับสมองข้ามค่ายอัตโนมัติพร้อมระบบ Tool Calling (Function Calling) และ Sliding Window History"""
         
         async def trigger_status(msg: str):
@@ -39,6 +39,60 @@ class ChatAgent:
                 "หลังรันเครื่องมือเสร็จสิ้น ให้สรุปคำตอบให้ผู้ใช้อย่างชัดเจนและเป็นมิตร"
             )
         }
+
+        # Determine environment state and apply rules
+        from agent.tools import WORKSPACE_DIR
+        has_repo = False
+        if os.path.exists(WORKSPACE_DIR):
+            try:
+                items = [i for i in os.listdir(WORKSPACE_DIR) if i not in [".pytest_cache", "__pycache__", ".git"]]
+                if len(items) > 0:
+                    has_repo = True
+                elif os.path.exists(os.path.join(WORKSPACE_DIR, ".git")):
+                    has_repo = True
+            except Exception:
+                has_repo = False
+
+        is_roblox_studio = False
+        if request_context:
+            is_roblox_studio = request_context.get("is_roblox_studio", False)
+            if not is_roblox_studio:
+                headers = request_context.get("headers", {})
+                for k, v in headers.items():
+                    if "roblox" in k.lower() or "roblox" in str(v).lower():
+                        is_roblox_studio = True
+                        break
+        # also detect Roblox Studio via prompt/payload context
+        if not is_roblox_studio and prompt:
+            if "roblox" in prompt.lower() or "luau" in prompt.lower() or "studio session" in prompt.lower():
+                is_roblox_studio = True
+
+        additional_rules = ""
+        if has_repo:
+            additional_rules += (
+                "\n\n[RULE 1: WORKSPACE WITH CLONED REPOSITORY (Repository Present)]\n"
+                "- หากผู้ใช้สั่งให้สร้างหรือแก้ไขไฟล์ (เช่น 'สร้างไฟล์ html') โดยไม่ได้ระบุเส้นทางโฟลเดอร์ (directory path) อย่างชัดเจน ให้กำหนดเส้นทางไฟล์เริ่มต้นไปที่ไดเรกทอรีราก (Root Directory: `./`) โดยอัตโนมัติ\n"
+                "- ใช้เครื่องมือจัดการไฟล์ใน workspace (เช่น `write_file`, `patch_file`) เพื่อเขียนโค้ดที่พร้อมใช้งานจริง (production-ready) ลงดิสก์โดยตรง\n"
+                "- ข้อห้ามเด็ดขาด (STRICTLY PROHIBITED): ห้ามเขียนโค้ดที่ใช้งานไม่ได้/ขยะ, ห้ามใส่คอมเมนต์หลอกลวงหรือ boilerplate placeholder (เช่น // TODO), และห้ามอธิบายความไร้ประโยชน์/อธิบายฟุ่มเฟือยภายในไฟล์ที่สร้างขึ้นเป็นอันขาด"
+            )
+        else:
+            additional_rules += (
+                "\n\n[RULE 2: NO REPOSITORY (Empty Workspace / Standalone Chat)]\n"
+                "- ขณะนี้ไม่มี repository ใดที่โคลนไว้ และ workspace ว่างเปล่า\n"
+                "- ห้ามพยายามเรียกใช้เครื่องมือเขียนลงดิสก์หรือสร้างไฟล์บนระบบเด็ดขาด (เครื่องมือเขียนไฟล์เช่น write_file และ patch_file ถูกปิดใช้งานในโหมดนี้)\n"
+                "- ให้สร้างและแสดงโค้ดฉบับเต็มที่ทำงานได้สมบูรณ์และพร้อมใช้งานจริงส่งกลับมาในแชทโดยตรงในรูปแบบ Markdown code block เพื่อให้ผู้ใช้สามารถตรวจสอบและคัดลอกได้อย่างง่ายดาย"
+            )
+
+        if is_roblox_studio:
+            additional_rules += (
+                "\n\n[RULE 3: ROBLOX STUDIO CONNECTION (Active Studio Session)]\n"
+                "- ตรวจพบว่าคำขอนี้มาจาก Roblox Studio ผ่านทาง HTTP/MCP Tunnel หรือเกี่ยวข้องกับ Roblox\n"
+                "- ให้ตระหนักว่าคุณกำลังสื่อสารและตอบโต้กับ Roblox Studio\n"
+                "- ทำความเข้าใจและรันงานภายใต้บริบทของ Luau / Roblox engine\n"
+                "- เรียกใช้งานเครื่องมือ Roblox MCP ที่มี หรือปรับแต่งโครงสร้างการตอบกลับรูปแบบ JSON ของคุณเพื่อให้สคริปต์ของ Roblox Studio สามารถประมวลผลและนำไปรันได้อย่างราบรื่นและมีประสิทธิภาพ"
+            )
+
+        system_message["content"] += additional_rules
 
         # Build message history with role translation (user / assistant)
         formatted_history = []
@@ -271,6 +325,11 @@ class ChatAgent:
                 return [to_gemini_type(item) for item in val]
             return val
 
+        # Filter active tools based on environment rules
+        active_tools = list(tools_schema)
+        if not has_repo:
+            active_tools = [t for t in active_tools if t["function"]["name"] not in ["write_file", "patch_file"]]
+
         # --- ลำดับที่ 1: ใช้ Groq เป็นหลักพร้อมการรัน Tool (Tool Execution Loop) ---
         if self.groq_key and "คีย์_" not in self.groq_key:
             try:
@@ -283,7 +342,7 @@ class ChatAgent:
                         payload = {
                             "model": "llama-3.3-70b-versatile",
                             "messages": current_messages,
-                            "tools": tools_schema,
+                            "tools": active_tools,
                             "tool_choice": "auto",
                             "temperature": 0.5,
                             "max_tokens": 2048
@@ -365,7 +424,7 @@ class ChatAgent:
             try:
                 # Convert tools to Gemini REST format
                 gemini_functions = []
-                for tool in tools_schema:
+                for tool in active_tools:
                     func_def = tool["function"]
                     gemini_functions.append({
                         "name": func_def["name"],
@@ -487,7 +546,7 @@ class ChatAgent:
                         payload = {
                             "model": "gpt-4o-mini",
                             "messages": current_messages,
-                            "tools": tools_schema,
+                            "tools": active_tools,
                             "tool_choice": "auto",
                             "temperature": 0.5,
                             "max_tokens": 2048
@@ -576,7 +635,7 @@ class ChatAgent:
                         payload = {
                             "model": "openrouter/free",
                             "messages": current_messages,
-                            "tools": tools_schema,
+                            "tools": active_tools,
                             "tool_choice": "auto",
                             "temperature": 0.5,
                             "max_tokens": 2048

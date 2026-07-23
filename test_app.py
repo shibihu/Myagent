@@ -257,5 +257,95 @@ class AppTests(unittest.TestCase):
         self.assertEqual(resp_favicon.status_code, 200)
         self.assertEqual(resp_favicon.headers.get("content-type"), "image/x-icon")
 
+    def test_environment_operational_rules(self):
+        """Test active environment and workspace state based operational rules."""
+        # Clean workspace to represent empty workspace (No Repository)
+        if os.path.exists(WORKSPACE_DIR):
+            shutil.rmtree(WORKSPACE_DIR)
+        os.makedirs(WORKSPACE_DIR, exist_ok=True)
+
+        # 1. No Repository: Disk writing tools write_file and patch_file should be disabled
+        class MockResponse:
+            def __init__(self, json_data, status_code=200):
+                self._json = json_data
+                self.status_code = status_code
+            def json(self):
+                return self._json
+
+        async def mock_post(*args, **kwargs):
+            payload = kwargs.get("json", {})
+            # Ensure write_file and patch_file are filtered out when workspace is empty
+            tools = payload.get("tools", [])
+            tool_names = [t["function"]["name"] for t in tools]
+            assert "write_file" not in tool_names
+            assert "patch_file" not in tool_names
+            return MockResponse({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "No repository. I will output inside a markdown block."
+                    }
+                }],
+                "usage": {"total_tokens": 10}
+            })
+
+        with patch.dict(os.environ, {"GROQ_API_KEY": "mock_key"}):
+            agent_instance = ChatAgent()
+            with patch("httpx.AsyncClient.post", side_effect=mock_post):
+                result = asyncio.run(agent_instance.get_response("Create an HTML page"))
+                self.assertIn("No repository", result["reply"])
+
+        # 2. Workspace with Cloned Repository: Write file tools should be available
+        # Create a dummy project file to trigger has_repo
+        with open(os.path.join(WORKSPACE_DIR, "dummy_project_file.txt"), "w") as f:
+            f.write("active project")
+
+        async def mock_post_repo(*args, **kwargs):
+            payload = kwargs.get("json", {})
+            tools = payload.get("tools", [])
+            tool_names = [t["function"]["name"] for t in tools]
+            # Ensure write_file and patch_file are present now
+            assert "write_file" in tool_names
+            assert "patch_file" in tool_names
+            return MockResponse({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "Repository exists. I will use the write_file tool."
+                    }
+                }],
+                "usage": {"total_tokens": 10}
+            })
+
+        with patch.dict(os.environ, {"GROQ_API_KEY": "mock_key"}):
+            agent_instance = ChatAgent()
+            with patch("httpx.AsyncClient.post", side_effect=mock_post_repo):
+                result = asyncio.run(agent_instance.get_response("Create an HTML page"))
+                self.assertIn("Repository exists", result["reply"])
+
+        # 3. Roblox Studio Session: check is_roblox_studio detection via headers/payload
+        async def mock_post_roblox(*args, **kwargs):
+            payload = kwargs.get("json", {})
+            messages = payload.get("messages", [])
+            system_msg = messages[0]["content"]
+            assert "ROBLOX STUDIO CONNECTION" in system_msg
+            return MockResponse({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "Roblox session detected."
+                    }
+                }],
+                "usage": {"total_tokens": 10}
+            })
+
+        with patch.dict(os.environ, {"GROQ_API_KEY": "mock_key"}):
+            agent_instance = ChatAgent()
+            with patch("httpx.AsyncClient.post", side_effect=mock_post_roblox):
+                # We can pass request_context with headers indicating Roblox
+                ctx = {"headers": {"User-Agent": "Roblox/WinInet"}}
+                result = asyncio.run(agent_instance.get_response("Create leaderboard script", request_context=ctx))
+                self.assertIn("Roblox session detected", result["reply"])
+
 if __name__ == "__main__":
     unittest.main()
