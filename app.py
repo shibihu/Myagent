@@ -38,13 +38,18 @@ async def verify_api_token(x_api_token: Optional[str] = Header(None, alias="X-AP
 
 app = FastAPI()
 
-# Add CORS middleware to allow cross-origin requests from Vercel deployment
+# Configured CORS Middleware for Localhost, Vercel, and Ngrok Tunnels
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allows Roblox Studio, local dev servers, and ngrok tunnels
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=[
+        "*",
+        "ngrok-skip-browser-warning",  # Allows bypass header for ngrok free tunnels
+        "X-API-Token",
+        "X-GitHub-Token"
+    ],
 )
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
