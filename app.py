@@ -7,6 +7,7 @@ from typing import Optional, List
 import io
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Form, File, UploadFile, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -159,6 +160,19 @@ async def index_page(request: Request):
             "NEXT_PUBLIC_API_URL": backend_url
         }
     )
+
+@app.get("/manifest.json")
+async def get_manifest():
+    """Serves the PWA manifest file."""
+    return FileResponse(os.path.join(BASE_DIR, "manifest.json"), media_type="application/json")
+
+@app.get("/favicon.ico")
+async def get_favicon():
+    """Serves the favicon.ico file from static directory."""
+    favicon_path = os.path.join(BASE_DIR, "static", "favicon.ico")
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path, media_type="image/x-icon")
+    raise HTTPException(status_code=404, detail="Favicon not found")
 
 @app.get("/chats")
 async def get_all_chats():
