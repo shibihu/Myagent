@@ -1,14 +1,22 @@
-# Environment Files (หากในอนาคตมีการแยกคีย์ความลับ)
+# Environment Files
 .env
 
-# Python Cache (ไฟล์ขยะของ Python)
+# Python Cache
 __pycache__/
 *.pyc
 node_modules/
 
-# Local JSON Databases (ประวัติแชทและความจำ)
+# Local JSON Databases
 chats.json
 memory.json
 
+# Python virtual environment
+venv/
+.venv/
+env/
 
-
+# Workspace & logs
+workspace/
+uvicorn.log
+*.tmp
+.pytest_cache/
