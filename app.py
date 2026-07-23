@@ -296,6 +296,22 @@ async def chat_endpoint(
     # Slicing Window: slice history to only send last 10 messages for optimized token usage
     sliding_history = messages[-10:] if len(messages) > 10 else messages
 
+    # Build request context for environment rules
+    headers_dict = dict(request.headers)
+    is_roblox_studio = False
+    for k, v in headers_dict.items():
+        if "roblox" in k.lower() or "roblox" in str(v).lower():
+            is_roblox_studio = True
+            break
+    if not is_roblox_studio and message:
+        if "roblox" in message.lower() or "studio session" in message.lower():
+            is_roblox_studio = True
+
+    request_context = {
+        "headers": headers_dict,
+        "is_roblox_studio": is_roblox_studio
+    }
+
     if "text/event-stream" in accept_header:
         from fastapi.responses import StreamingResponse
 
@@ -307,7 +323,12 @@ async def chat_endpoint(
 
             async def run_agent_task():
                 try:
-                    res = await agent.get_response(injected_message, history=sliding_history, status_callback=status_cb)
+                    res = await agent.get_response(
+                        injected_message,
+                        history=sliding_history,
+                        status_callback=status_cb,
+                        request_context=request_context
+                    )
 
                     # Add result to messages history chain and save
                     messages.append({
@@ -347,7 +368,7 @@ async def chat_endpoint(
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     # Standard JSON fallback for backward compatibility / tests
-    result = await agent.get_response(injected_message, history=sliding_history)
+    result = await agent.get_response(injected_message, history=sliding_history, request_context=request_context)
 
     messages.append({
         "role": "ai",
