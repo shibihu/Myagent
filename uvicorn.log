@@ -1,0 +1,10 @@
+INFO:     Started server process [1578870]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+[Local-First DB] Successfully initialized. Loaded 46 chats and 21 memories.
+INFO:     127.0.0.1:60610 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56332 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56332 - "GET /static/style.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56340 - "GET /static/script.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56340 - "GET /chats HTTP/1.1" 200 OK
