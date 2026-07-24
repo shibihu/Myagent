@@ -20,8 +20,6 @@ Produce strictly production-ready, highly optimized, error-tolerant, and fully i
   * Always use `task.wait()`, `task.delay()`, and `task.spawn()` instead of legacy `wait()`, `delay()`, and `spawn()`.
   * Use type annotations where applicable and prefer `ipairs` or generalized iteration.
 - DATASTORE INTEGRATION: For data persistence, implement `DataStoreService` with retry logic, `pcall`, and handle both `PlayerRemoving` and `game:BindToClose()` for server shutdowns.
-- CLEANEST-CODE PRINCIPLE: Strictly write cleanest, production-ready Luau scripts. Never write placeholder comments (e.g., -- TODO), useless trash code, or unnecessary filler explanations.
-- SEQUENCING TOOL CALLS: When creating multiple UI elements, folder structures, or classes, sequence multiple Roblox Studio MCP tool calls in a single execution pipeline (e.g., Create ScreenGui -> Create Frame -> Create TextButton in a single pipeline).
 
 ==================================================
 3. JAVASCRIPT (ES6+ & NODE.JS) SPECIALIST RULES:

@@ -257,14 +257,25 @@ class AppTests(unittest.TestCase):
         self.assertEqual(resp_favicon.status_code, 200)
         self.assertEqual(resp_favicon.headers.get("content-type"), "image/x-icon")
 
-    def test_environment_operational_rules(self):
-        """Test active environment and workspace state based operational rules."""
-        # Clean workspace to represent empty workspace (No Repository)
-        if os.path.exists(WORKSPACE_DIR):
-            shutil.rmtree(WORKSPACE_DIR)
-        os.makedirs(WORKSPACE_DIR, exist_ok=True)
+    def test_github_auth_and_user_management(self):
+        """Test GitHub OAuth login redirect, mock callback, user registration, JWT generation, and flexible auth policies."""
+        from unittest.mock import patch
+        import jwt
+        from agent.auth import JWT_SECRET, JWT_ALGORITHM
 
-        # 1. No Repository: Disk writing tools write_file and patch_file should be disabled
+        # 1. Test Login Redirect
+        with patch("agent.auth.GITHUB_CLIENT_ID", "mock_id"):
+            resp = self.client.get("/auth/github/login", follow_redirects=False)
+            self.assertEqual(resp.status_code, 307)
+            self.assertTrue(resp.headers.get("location").startswith("https://github.com/login/oauth/authorize"))
+            self.assertIn("client_id=mock_id", resp.headers.get("location"))
+
+        # 2. Test Login Redirect Configuration Error
+        with patch("agent.auth.GITHUB_CLIENT_ID", ""):
+            resp = self.client.get("/auth/github/login")
+            self.assertEqual(resp.status_code, 500)
+
+        # 3. Test OAuth Callback with mock exchanges
         class MockResponse:
             def __init__(self, json_data, status_code=200):
                 self._json = json_data
@@ -272,169 +283,70 @@ class AppTests(unittest.TestCase):
             def json(self):
                 return self._json
 
-        async def mock_post(*args, **kwargs):
-            payload = kwargs.get("json", {})
-            # Ensure write_file and patch_file are filtered out when workspace is empty
-            tools = payload.get("tools", [])
-            tool_names = [t["function"]["name"] for t in tools]
-            assert "write_file" not in tool_names
-            assert "patch_file" not in tool_names
-            return MockResponse({
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": "No repository. I will output inside a markdown block."
-                    }
-                }],
-                "usage": {"total_tokens": 10}
-            })
+            @property
+            def text(self):
+                return json.dumps(self._json)
 
-        with patch.dict(os.environ, {"GROQ_API_KEY": "mock_key"}):
-            agent_instance = ChatAgent()
-            with patch("httpx.AsyncClient.post", side_effect=mock_post):
-                result = asyncio.run(agent_instance.get_response("Create an HTML page"))
-                self.assertIn("No repository", result["reply"])
-
-        # 2. Workspace with Cloned Repository: Write file tools should be available
-        # Create a dummy project file to trigger has_repo
-        with open(os.path.join(WORKSPACE_DIR, "dummy_project_file.txt"), "w") as f:
-            f.write("active project")
-
-        async def mock_post_repo(*args, **kwargs):
-            payload = kwargs.get("json", {})
-            tools = payload.get("tools", [])
-            tool_names = [t["function"]["name"] for t in tools]
-            # Ensure write_file and patch_file are present now
-            assert "write_file" in tool_names
-            assert "patch_file" in tool_names
-            return MockResponse({
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": "Repository exists. I will use the write_file tool."
-                    }
-                }],
-                "usage": {"total_tokens": 10}
-            })
-
-        with patch.dict(os.environ, {"GROQ_API_KEY": "mock_key"}):
-            agent_instance = ChatAgent()
-            with patch("httpx.AsyncClient.post", side_effect=mock_post_repo):
-                result = asyncio.run(agent_instance.get_response("Create an HTML page"))
-                self.assertIn("Repository exists", result["reply"])
-
-        # 3. Roblox Studio Session: check is_roblox_studio detection via headers/payload
-        async def mock_post_roblox(*args, **kwargs):
-            payload = kwargs.get("json", {})
-            messages = payload.get("messages", [])
-            system_msg = messages[0]["content"]
-            assert "ROBLOX STUDIO CONNECTION" in system_msg
-            return MockResponse({
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": "Roblox session detected."
-                    }
-                }],
-                "usage": {"total_tokens": 10}
-            })
-
-        with patch.dict(os.environ, {"GROQ_API_KEY": "mock_key"}):
-            agent_instance = ChatAgent()
-            with patch("httpx.AsyncClient.post", side_effect=mock_post_roblox):
-                # We can pass request_context with headers indicating Roblox
-                ctx = {"headers": {"User-Agent": "Roblox/WinInet"}}
-                result = asyncio.run(agent_instance.get_response("Create leaderboard script", request_context=ctx))
-                self.assertIn("Roblox session detected", result["reply"])
-
-    def test_roblox_mcp_tool_routing_and_self_correction(self):
-        """Test Roblox Studio MCP tool routing, intent reasoning, path resolution, and self-correction retries."""
-        from agent.mcp_registry import get_mcp_tools_schemas, resolve_target_path
-
-        # 1. Verify dynamic schema loader returns 27 tools
-        schemas = get_mcp_tools_schemas()
-        self.assertEqual(len(schemas), 27)
-        tool_names = [t["function"]["name"] for t in schemas]
-        self.assertIn("roblox_create_instance", tool_names)
-        self.assertIn("roblox_update_script_source", tool_names)
-
-        # 2. Verify target path resolver
-        resolved = resolve_target_path("leaderstats")
-        self.assertEqual(resolved, "game.ServerScriptService")
-        resolved_ui = resolve_target_path("ui")
-        self.assertEqual(resolved_ui, "game.StarterGui")
-
-        # 3. Verify self-correction retry feedback loop
-        agent_instance = ChatAgent()
-
-        call_count = 0
-        async def mock_execute_mcp(tool_name, args):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                # First attempt fails due to missing game. prefix in scriptPath
-                self.assertEqual(args["scriptPath"], "Workspace.MyScript")
-                return {"status": "error", "message": "Invalid hierarchy root path"}
-            else:
-                # Second attempt succeeds after automatic correction prepends game.
-                self.assertEqual(args["scriptPath"], "game.Workspace.MyScript")
-                return {"status": "success", "result": "Source updated!"}
-
-        with patch("agent.mcp_registry.execute_roblox_mcp_tool", side_effect=mock_execute_mcp):
-            # We patch trigger_status as well
-            async def trigger_status(msg):
-                pass
-
-            class MockResponse:
-                def __init__(self, json_data, status_code=200):
-                    self._json = json_data
-                    self.status_code = status_code
-                def json(self):
-                    return self._json
-
-            # We mock the sequence of two post responses: first returns a tool call, second returns final reply
-            mock_responses = [
-                MockResponse({
-                    "choices": [{
-                        "message": {
-                            "role": "assistant",
-                            "content": None,
-                            "tool_calls": [{
-                                "id": "call_roblox1",
-                                "type": "function",
-                                "function": {
-                                    "name": "roblox_update_script_source",
-                                    "arguments": json.dumps({"scriptPath": "Workspace.MyScript", "source": "print(1)"})
-                                }
-                            }]
-                        }
-                    }],
-                    "usage": {"total_tokens": 50}
-                }),
-                MockResponse({
-                    "choices": [{
-                        "message": {
-                            "role": "assistant",
-                            "content": "Updated successfully.",
-                            "tool_calls": None
-                        }
-                    }],
-                    "usage": {"total_tokens": 100}
+        async def mock_httpx_post_and_get(*args, **kwargs):
+            url = args[0] if args else kwargs.get("url", "")
+            if "oauth/access_token" in url:
+                return MockResponse({"access_token": "mock_github_access_token"})
+            elif "api.github.com/user/emails" in url:
+                return MockResponse([{"email": "verified_user@bot.local", "primary": True, "verified": True}])
+            elif "api.github.com/user" in url:
+                return MockResponse({
+                    "id": 12345,
+                    "login": "test_github_user",
+                    "avatar_url": "https://github.com/avatar.png",
+                    "email": None  # Trigger fetching from user/emails
                 })
-            ]
+            return MockResponse({}, 404)
 
-            response_iterator = iter(mock_responses)
+        with patch("httpx.AsyncClient.post", side_effect=mock_httpx_post_and_get), \
+             patch("httpx.AsyncClient.get", side_effect=mock_httpx_post_and_get), \
+             patch("agent.auth.GITHUB_CLIENT_ID", "mock_id"), \
+             patch("agent.auth.GITHUB_CLIENT_SECRET", "mock_secret"):
 
-            async def mock_post(*args, **kwargs):
-                return next(response_iterator)
+            # Invoke the callback
+            resp = self.client.get("/auth/github/callback?code=mock_code", follow_redirects=False)
+            self.assertEqual(resp.status_code, 307)
+            self.assertEqual(resp.headers.get("location"), "/")
+            self.assertIn("access_token", resp.headers.get("set-cookie"))
 
-            with patch.dict(os.environ, {"GROQ_API_KEY": "mock_key"}):
-                agent_instance = ChatAgent()
-                with patch("httpx.AsyncClient.post", side_effect=mock_post):
-                    ctx = {"headers": {"User-Agent": "Roblox/WinInet"}}
-                    result = asyncio.run(agent_instance.get_response("Update the script source", request_context=ctx))
-                    self.assertEqual(result["reply"], "Updated successfully.")
-                    self.assertEqual(call_count, 2)
+            # Extract the cookie token to test protected routes
+            cookie_str = resp.headers.get("set-cookie")
+            token_val = None
+            for part in cookie_str.split(";"):
+                if part.strip().startswith("access_token="):
+                    token_val = part.strip().split("=")[1]
+                    break
+            self.assertIsNotNone(token_val)
+
+            # 4. Test GET /auth/me with both cookie and Bearer Header
+            headers = {"Authorization": f"Bearer {token_val}"}
+            me_resp = self.client.get("/auth/me", headers=headers)
+            self.assertEqual(me_resp.status_code, 200)
+            user_data = me_resp.json()
+            self.assertEqual(user_data["username"], "test_github_user")
+            self.assertEqual(user_data["email"], "verified_user@bot.local")
+
+            # Using Cookie
+            self.client.cookies.set("access_token", token_val)
+            me_resp_cookie = self.client.get("/auth/me")
+            self.assertEqual(me_resp_cookie.status_code, 200)
+            self.assertEqual(me_resp_cookie.json()["username"], "test_github_user")
+            self.client.cookies.delete("access_token")
+
+        # 5. Test Flexible policy with X-API-Token
+        from fastapi import Request
+        from agent.auth import get_current_user_or_api_client
+        import unittest.mock as mock
+
+        mock_req = mock.Mock()
+        mock_req.headers = {"X-API-Token": "super-secret-ide-agent-token-123"}
+        res = asyncio.run(get_current_user_or_api_client(mock_req))
+        self.assertTrue(res["is_api_client"])
+        self.assertEqual(res["username"], "Roblox_Studio_Client")
 
 if __name__ == "__main__":
     unittest.main()

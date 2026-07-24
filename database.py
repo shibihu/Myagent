@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 # Local files paths for persistent storage
 CHATS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chats.json")
 MEMORIES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory.json")
+USERS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json")
 
 # Asynchronous lock to prevent concurrent write collisions and file corruption
 _file_lock = asyncio.Lock()
@@ -48,7 +49,38 @@ class LocalFirstDatabaseHelper:
         # Load initial local records into cache memory on startup
         self.chats: Dict[str, dict] = _load_json_file(CHATS_FILE, {})
         self.memories: Dict[str, list] = _load_json_file(MEMORIES_FILE, {"facts": []})
-        print(f"[Local-First DB] Successfully initialized. Loaded {len(self.chats)} chats and {len(self.memories.get('facts', []))} memories.")
+        self.users: Dict[str, dict] = _load_json_file(USERS_FILE, {})
+        print(f"[Local-First DB] Successfully initialized. Loaded {len(self.chats)} chats, {len(self.memories.get('facts', []))} memories, and {len(self.users)} users.")
+
+    async def get_user(self, github_id: str) -> Optional[dict]:
+        """Fetch user data by GitHub ID."""
+        async with _file_lock:
+            return self.users.get(str(github_id))
+
+    async def save_or_update_user(self, github_id: str, username: str, email: Optional[str], avatar_url: Optional[str]) -> dict:
+        """Saves or updates user records upon successful login."""
+        import datetime
+        async with _file_lock:
+            g_id = str(github_id)
+            now = datetime.datetime.utcnow().isoformat()
+            if g_id in self.users:
+                user = self.users[g_id]
+                user["username"] = username
+                user["email"] = email
+                user["avatar_url"] = avatar_url
+                user["last_login"] = now
+            else:
+                user = {
+                    "github_id": g_id,
+                    "username": username,
+                    "email": email,
+                    "avatar_url": avatar_url,
+                    "created_at": now,
+                    "last_login": now
+                }
+            self.users[g_id] = user
+            _save_json_file(USERS_FILE, self.users)
+            return user
 
     async def get_all_chats(self) -> List[dict]:
         """Returns metadata list of all active chat sessions."""
