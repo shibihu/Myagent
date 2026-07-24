@@ -823,16 +823,37 @@ async function sendMessage() {
                 hasSupabaseSession = true;
                 supabaseAccessToken = session.access_token;
 
-                // Requirement 1: Insert prompt to 'prompts' table using active session user id
-                const { error: insertError } = await window.supabaseInstance.from('prompts').insert([{
-                    prompt: text,
-                    content: text,
-                    user_id: session.user.id
-                }]);
-                if (insertError) {
-                    console.error("Error inserting prompt to Supabase prompts table:", insertError);
+                // Requirement 1 & 3: Submit prompt to Supabase prompts table (Edge Function or direct client insert)
+                if (window.NEXT_PUBLIC_API_URL) {
+                    try {
+                        const edgeResponse = await fetch(window.NEXT_PUBLIC_API_URL, {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                                "Authorization": `Bearer ${supabaseAccessToken}`
+                            },
+                            body: JSON.stringify({ prompt: text })
+                        });
+                        if (edgeResponse.ok) {
+                            console.log("Successfully inserted prompt to Supabase prompts table via Edge Function API.");
+                        } else {
+                            const errBody = await edgeResponse.json();
+                            console.error("Failed to insert prompt via Edge Function API:", errBody);
+                        }
+                    } catch (err) {
+                        console.error("Exception when calling Edge Function API:", err);
+                    }
                 } else {
-                    console.log("Successfully inserted prompt to Supabase prompts table.");
+                    // Fallback: Direct Client Insert without non-existent 'prompt' column
+                    const { error: insertError } = await window.supabaseInstance.from('prompts').insert([{
+                        content: text,
+                        user_id: session.user.id
+                    }]);
+                    if (insertError) {
+                        console.error("Error inserting prompt to Supabase prompts table directly:", insertError);
+                    } else {
+                        console.log("Successfully inserted prompt to Supabase prompts table directly.");
+                    }
                 }
             }
         } catch (err) {
@@ -1262,7 +1283,7 @@ async function loadAllPromptsFromSupabase() {
     try {
         const { data, error } = await supabaseClient
             .from('prompts')
-            .select('id, prompt, content, created_at, user_id, users (username, avatar_url)')
+            .select('id, content, created_at, user_id, users (username, avatar_url)')
             .order('created_at', { ascending: true });
 
         if (error) {
@@ -1275,7 +1296,7 @@ async function loadAllPromptsFromSupabase() {
             data.forEach(item => {
                 const authorName = item.users?.username || "GitHub User";
                 const authorAvatar = item.users?.avatar_url || "";
-                const promptText = item.prompt || item.content || "";
+                const promptText = item.content || "";
                 renderStaticMessageWithMetadata(authorName, authorAvatar, promptText);
             });
             chatBox.scrollTop = chatBox.scrollHeight;
@@ -1303,6 +1324,13 @@ function setupPromptsRealtimeSubscription() {
                     const newRow = payload.new;
                     if (newRow) {
                         try {
+                            // Avoid double-rendering our own message if we are the sender
+                            const { data: { session } } = await supabaseClient.auth.getSession();
+                            if (session && session.user && session.user.id === newRow.user_id) {
+                                console.log("Skipping realtime rendering of our own inserted prompt to avoid duplicates.");
+                                return;
+                            }
+
                             const { data: userData, error } = await supabaseClient
                                 .from('users')
                                 .select('username, avatar_url')
@@ -1311,12 +1339,12 @@ function setupPromptsRealtimeSubscription() {
 
                             const authorName = userData?.username || "GitHub User";
                             const authorAvatar = userData?.avatar_url || "";
-                            const promptText = newRow.prompt || newRow.content || "";
+                            const promptText = newRow.content || "";
 
                             renderStaticMessageWithMetadata(authorName, authorAvatar, promptText);
                         } catch (userErr) {
                             console.error("Error loading user metadata in Realtime callback:", userErr);
-                            renderStaticMessageWithMetadata("GitHub User", "", newRow.prompt || newRow.content || "");
+                            renderStaticMessageWithMetadata("GitHub User", "", newRow.content || "");
                         }
                     }
                 }
