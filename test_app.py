@@ -377,5 +377,77 @@ class AppTests(unittest.TestCase):
         self.assertEqual(user_record.username, "supabase_dev")
         self.assertEqual(user_record.prompt_content, "test metadata")
 
+    def test_environment_operational_rules_detection(self):
+        """Test that ChatAgent dynamically and correctly detects the environment state and applies the appropriate system prompt/operational rules."""
+        import os
+        import shutil
+        from unittest.mock import patch
+        import json
+        from agent.tools import WORKSPACE_DIR
+
+        # Mock response to capture payload
+        captured_payloads = []
+
+        class MockResponse:
+            def __init__(self, json_data, status_code=200):
+                self._json = json_data
+                self.status_code = status_code
+            def json(self):
+                return self._json
+
+        async def mock_post_capture(*args, **kwargs):
+            # Capture the JSON payload sent to Groq/LLM
+            captured_payloads.append(kwargs.get("json"))
+            return MockResponse({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "Mocked response",
+                        "tool_calls": None
+                    }
+                }],
+                "usage": {"total_tokens": 10}
+            })
+
+        with patch.dict(os.environ, {"GROQ_API_KEY": "mock_key"}), \
+             patch("httpx.AsyncClient.post", side_effect=mock_post_capture):
+
+            agent_instance = ChatAgent()
+
+            # Scenario A: NO REPOSITORY (Empty Workspace / Standalone Chat)
+            # Ensure workspace is totally empty or does not exist
+            if os.path.exists(WORKSPACE_DIR):
+                shutil.rmtree(WORKSPACE_DIR)
+
+            captured_payloads.clear()
+            res = asyncio.run(agent_instance.get_response("Hello, write some code please"))
+            self.assertEqual(res["reply"], "Mocked response")
+            self.assertTrue(len(captured_payloads) > 0)
+            system_msg = captured_payloads[0]["messages"][0]["content"]
+            self.assertIn("NO REPOSITORY (Empty Workspace / Standalone Chat)", system_msg)
+            self.assertIn("Do NOT attempt to invoke disk writing tools", system_msg)
+
+            # Scenario B: WORKSPACE WITH CLONED REPOSITORY (Repository Present)
+            # Create workspace and add a file/folder to simulate cloned repo or project files
+            os.makedirs(WORKSPACE_DIR, exist_ok=True)
+            with open(os.path.join(WORKSPACE_DIR, "project_file.py"), "w") as f:
+                f.write("# some python code")
+
+            captured_payloads.clear()
+            res = asyncio.run(agent_instance.get_response("Hello, please create a file"))
+            self.assertTrue(len(captured_payloads) > 0)
+            system_msg = captured_payloads[0]["messages"][0]["content"]
+            self.assertIn("WORKSPACE WITH CLONED REPOSITORY (Repository Present)", system_msg)
+            self.assertIn("automatically default the file path to the Root Directory", system_msg)
+
+            # Scenario C: ROBLOX STUDIO CONNECTION (Active Studio Session)
+            # Pass is_roblox=True or have roblox hint in prompt
+            captured_payloads.clear()
+            res = asyncio.run(agent_instance.get_response("Help me code Roblox Studio scripts"))
+            self.assertTrue(len(captured_payloads) > 0)
+            system_msg = captured_payloads[0]["messages"][0]["content"]
+            self.assertIn("ROBLOX STUDIO CONNECTION (Active Studio Session)", system_msg)
+            self.assertIn("Utilize available Roblox MCP tools", system_msg)
+
 if __name__ == "__main__":
     unittest.main()

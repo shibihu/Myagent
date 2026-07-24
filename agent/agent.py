@@ -21,7 +21,7 @@ class ChatAgent:
         self.openai_key = os.getenv("OPENAI_API_KEY", "")
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
 
-    async def get_response(self, prompt: str, history: list = None, status_callback=None) -> dict:
+    async def get_response(self, prompt: str, history: list = None, status_callback=None, is_roblox: bool = False) -> dict:
         """ระบบสลับสมองข้ามค่ายอัตโนมัติพร้อมระบบ Tool Calling (Function Calling) และ Sliding Window History"""
         
         async def trigger_status(msg: str):
@@ -33,16 +33,71 @@ class ChatAgent:
 
         await trigger_status("Thinking / Processing...")
 
+        # Determine Environment Context
+        from agent.tools import WORKSPACE_DIR
+        import os
+
+        # 1. Roblox Studio Check
+        is_roblox_conn = is_roblox
+        if not is_roblox_conn:
+            prompt_lower = prompt.lower()
+            if "roblox" in prompt_lower or "luau" in prompt_lower or "roblox studio" in prompt_lower:
+                is_roblox_conn = True
+
+        # 2. Cloned Repository Check
+        has_repo = False
+        if os.path.exists(WORKSPACE_DIR):
+            if os.path.exists(os.path.join(WORKSPACE_DIR, ".git")):
+                has_repo = True
+            else:
+                try:
+                    items = [i for i in os.listdir(WORKSPACE_DIR) if i not in (".", "..", ".git", "__pycache__")]
+                    if len(items) > 0:
+                        has_repo = True
+                except Exception:
+                    pass
+
+        # Build dynamic environment context segment for system prompt
+        if is_roblox_conn:
+            env_status = "ROBLOX STUDIO CONNECTION (Active Studio Session)"
+            env_instruction = (
+                "1. Recognize that you are interacting with Roblox Studio via HTTP/MCP Tunnel.\n"
+                "2. Understand the Luau / Roblox engine context of the request.\n"
+                "3. Utilize available Roblox MCP tools or structure your JSON response specifically so Roblox Studio scripts can execute the actions seamlessly."
+            )
+        elif has_repo:
+            env_status = "WORKSPACE WITH CLONED REPOSITORY (Repository Present)"
+            env_instruction = (
+                "1. If the user requests to create or modify a file WITHOUT explicitly providing a directory path, automatically default the file path to the Root Directory (e.g., './filename.ext' or './').\n"
+                "2. Use workspace file tools (e.g., `write_file` or `patch_file`) to write clean, production-ready code directly to disk.\n"
+                "3. STRICTLY PROHIBITED: Do not write useless/trash code, boilerplate placeholder comments (e.g., // TODO), or unnecessary explanations inside the generated file."
+            )
+        else:
+            env_status = "NO REPOSITORY (Empty Workspace / Standalone Chat)"
+            env_instruction = (
+                "1. Do NOT attempt to invoke disk writing tools or create files on the system (e.g. write_file, patch_file, execute_command to write files).\n"
+                "2. Output the complete, fully functional code directly inside the chat as a clean Markdown code block so the user can easily review and copy it."
+            )
+
+        system_content = (
+            "คุณคือ AI IDE Agent ที่มี Tools จัดการไฟล์และ Git\n\n"
+            "==================================================\n"
+            f"CURRENT DETECTED ENVIRONMENT CONTEXT:\n"
+            f"- Environment Status: {env_status}\n"
+            "==================================================\n"
+            "STRICT OPERATIONAL RULES FOR THIS ENVIRONMENT:\n"
+            f"{env_instruction}\n"
+            "==================================================\n\n"
+            "หากผู้ใช้สั่งให้ Clone Repo, อ่านไฟล์, หรือดูรายชื่อไฟล์ (และอยู่ในสถานะมี Repository) คุณต้องเรียกใช้ Tool "
+            "(`git_clone`, `list_directory`, `read_file`, `patch_file`, `write_file`, `execute_command`) จริงๆ เท่านั้น "
+            "**ห้ามเขียนคำอธิบายคำสั่ง Terminal หรือจำลองผลลัพธ์ขึ้นมาเองเด็ดขาด** "
+            "คุณมีสิทธิ์เข้าถึง แก้ไข อ่าน และจัดการไฟล์ใน Workspace ผ่านเครื่องมือ (Tools) ที่มีให้ "
+            "หลังรันเครื่องมือเสร็จสิ้น ให้สรุปคำตอบให้ผู้ใช้อย่างชัดเจนและเป็นมิตร"
+        )
+
         system_message = {
             "role": "system",
-            "content": (
-                "คุณคือ AI IDE Agent ที่มี Tools จัดการไฟล์และ Git "
-                "หากผู้ใช้สั่งให้ Clone Repo, อ่านไฟล์, หรือดูรายชื่อไฟล์ คุณต้องเรียกใช้ Tool "
-                "(`git_clone`, `list_directory`, `read_file`, `patch_file`, `write_file`, `execute_command`) จริงๆ เท่านั้น "
-                "**ห้ามเขียนคำอธิบายคำสั่ง Terminal หรือจำลองผลลัพธ์ขึ้นมาเองเด็ดขาด** "
-                "คุณมีสิทธิ์เข้าถึง แก้ไข อ่าน และจัดการไฟล์ใน Workspace ผ่านเครื่องมือ (Tools) ที่มีให้ "
-                "หลังรันเครื่องมือเสร็จสิ้น ให้สรุปคำตอบให้ผู้ใช้อย่างชัดเจนและเป็นมิตร"
-            )
+            "content": system_content
         }
 
         # Build message history with role translation (user / assistant)

@@ -16,38 +16,89 @@ class IDEAgent:
         determines which tool to use, sees the output, and corrects its own errors
         until the goal is completed or iteration limit is reached.
         """
+        from agent.tools import WORKSPACE_DIR
+        import os
+
+        # Check if workspace has cloned repository / existing project files
+        has_repo = False
+        if os.path.exists(WORKSPACE_DIR):
+            if os.path.exists(os.path.join(WORKSPACE_DIR, ".git")):
+                has_repo = True
+            else:
+                try:
+                    items = [i for i in os.listdir(WORKSPACE_DIR) if i not in (".", "..", ".git", "__pycache__")]
+                    if len(items) > 0:
+                        has_repo = True
+                except Exception:
+                    pass
+
+        # Check Roblox Studio hints from user instruction
+        is_roblox_conn = False
+        user_inst_lower = user_instruction.lower()
+        if "roblox" in user_inst_lower or "luau" in user_inst_lower or "roblox studio" in user_inst_lower:
+            is_roblox_conn = True
+
+        if is_roblox_conn:
+            env_status = "ROBLOX STUDIO CONNECTION (Active Studio Session)"
+            env_instruction = (
+                "1. Recognize that you are interacting with Roblox Studio via HTTP/MCP Tunnel.\n"
+                "2. Understand the Luau / Roblox engine context of the request.\n"
+                "3. Utilize available Roblox MCP tools or structure your JSON response specifically so Roblox Studio scripts can execute the actions seamlessly."
+            )
+        elif has_repo:
+            env_status = "WORKSPACE WITH CLONED REPOSITORY (Repository Present)"
+            env_instruction = (
+                "1. If the user requests to create or modify a file WITHOUT explicitly providing a directory path, automatically default the file path to the Root Directory (e.g., './filename.ext' or './').\n"
+                "2. Use workspace file tools (e.g., `patch_file` or `write_file`) to write clean, production-ready code directly to disk.\n"
+                "3. STRICTLY PROHIBITED: Do not write useless/trash code, boilerplate placeholder comments (e.g., // TODO), or unnecessary explanations inside the generated file."
+            )
+        else:
+            env_status = "NO REPOSITORY (Empty Workspace / Standalone Chat)"
+            env_instruction = (
+                "1. Do NOT attempt to invoke disk writing tools or create files on the system (e.g., patch_file or write_file).\n"
+                "2. Output the complete, fully functional code directly inside the chat as a clean Markdown code block so the user can easily review and copy it."
+            )
+
         # Build the system instruction detailing the tools available.
-        system_prompt = """
+        system_prompt = f"""
 คุณคือ "IDE Agent" บอตผู้ช่วยเขียน รัน และทดสอบโค้ดแบบอัตโนมัติ
 คุณมีสิทธิ์เข้าถึง Workspace และสามารถเรียกใช้เครื่องมือ (Tools) ต่อไปนี้เพื่อทำงานให้สำเร็จ:
 
 1. read_file: อ่านไฟล์ใน Workspace
-   - รูปแบบการเรียกใช้: {"tool": "read_file", "filepath": "เส้นทาง/ไปยัง/ไฟล์.txt"}
+   - รูปแบบการเรียกใช้: {{"tool": "read_file", "filepath": "เส้นทาง/ไปยัง/ไฟล์.txt"}}
 
 2. patch_file: แก้ไขโค้ดเฉพาะจุดในไฟล์แบบไม่ต้องเขียนทับทั้งไฟล์
    - หากไฟล์ไม่มีอยู่จริง และต้องการเขียนเนื้อหาใหม่ทั้งหมด ให้ตั้งค่า "search_block" เป็นค่าว่าง "" หรือ "null" หรือไม่ใส่มาเลยก็ได้
-   - รูปแบบการเรียกใช้: {"tool": "patch_file", "filepath": "เส้นทาง/ไปยัง/ไฟล์.py", "search_block": "โค้ดเดิมที่จะค้นหา", "replace_block": "โค้ดใหม่ที่จะมาแทนที่"}
+   - รูปแบบการเรียกใช้: {{"tool": "patch_file", "filepath": "เส้นทาง/ไปยัง/ไฟล์.py", "search_block": "โค้ดเดิมที่จะค้นหา", "replace_block": "โค้ดใหม่ที่จะมาแทนที่"}}
 
 3. view_dir: ดูโครงสร้างโฟลเดอร์ทั้งหมด
-   - รูปแบบการเรียกใช้: {"tool": "view_dir", "path": "."}
+   - รูปแบบการเรียกใช้: {{"tool": "view_dir", "path": "."}}
 
 4. execute_command: สั่งรันคำสั่งใน Workspace และส่งผลลัพธ์กลับมา
    - ใช้ในการติดตั้งแพ็กเกจ รันสคริปต์ รันเทสต์ ฯลฯ
-   - รูปแบบการเรียกใช้: {"tool": "execute_command", "command": "คำสั่งที่จะรัน"}
+   - รูปแบบการเรียกใช้: {{"tool": "execute_command", "command": "คำสั่งที่จะรัน"}}
 
 5. clone_repository: ดึง Repository จาก GitHub ลงมาใน Workspace (จะล้าง Workspace เดิมก่อนเสมอ)
-   - รูปแบบการเรียกใช้: {"tool": "clone_repository", "repo_url": "ลิงก์ GitHub"}
+   - รูปแบบการเรียกใช้: {{"tool": "clone_repository", "repo_url": "ลิงก์ GitHub"}}
 
 6. git_status: เช็กความเปลี่ยนแปลงของโค้ดใน git
-   - รูปแบบการเรียกใช้: {"tool": "git_status"}
+   - รูปแบบการเรียกใช้: {{"tool": "git_status"}}
 
 7. git_rollback: ย้อนโค้ดกลับกรณีทำโค้ดพังหรือรันไม่ผ่าน
-   - รูปแบบการเรียกใช้: {"tool": "git_rollback"}
+   - รูปแบบการเรียกใช้: {{"tool": "git_rollback"}}
+
+==================================================
+CURRENT DETECTED ENVIRONMENT CONTEXT:
+- Environment Status: {env_status}
+==================================================
+STRICT OPERATIONAL RULES FOR THIS ENVIRONMENT:
+{env_instruction}
+==================================================
 
 คำแนะนำการตอบกลับ:
-- หากคุณจำเป็นต้องเรียกใช้เครื่องมือ (Tool) ให้ตอบกลับด้วยโครงสร้าง JSON ตัวเดียวเท่านั้น ห้ามมีคำอธิบายอื่น ห้ามครอบด้วย Markdown Block (เช่น ```json) ยกเว้นถ้าคุณคิดว่านั่นคือสิ่งเดียวที่ส่งคืนได้ แต่จะดีที่สุดหากคุณตอบ JSON ตรงๆ เลย
+- หากคุณจำเป็นต้องเรียกใช้เครื่องมือ (Tool) และได้รับอนุญาตใน Environment นี้ ให้ตอบกลับด้วยโครงสร้าง JSON ตัวเดียวเท่านั้น ห้ามมีคำอธิบายอื่น ห้ามครอบด้วย Markdown Block (เช่น ```json) ยกเว้นถ้าคุณคิดว่านั่นคือสิ่งเดียวที่ส่งคืนได้ แต่จะดีที่สุดหากคุณตอบ JSON ตรงๆ เลย
   ตัวอย่างการเรียก Tool:
-  {"tool": "execute_command", "command": "pytest"}
+  {{"tool": "execute_command", "command": "pytest"}}
 
 - หากงานสำเร็จลุล่วงแล้ว หรือคุณต้องการส่งรายงานสรุปให้ผู้ใช้ ให้ส่งข้อความปกติที่ไม่ใช่โครงสร้างการเรียกใช้ Tool โดยระบุคำว่า [DONE] หรือสรุปขั้นตอนต่างๆ ให้ชัดเจน
 
