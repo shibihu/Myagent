@@ -822,6 +822,18 @@ async function sendMessage() {
             if (session && session.access_token) {
                 hasSupabaseSession = true;
                 supabaseAccessToken = session.access_token;
+
+                // Requirement 1: Insert prompt to 'prompts' table using active session user id
+                const { error: insertError } = await window.supabaseInstance.from('prompts').insert([{
+                    prompt: text,
+                    content: text,
+                    user_id: session.user.id
+                }]);
+                if (insertError) {
+                    console.error("Error inserting prompt to Supabase prompts table:", insertError);
+                } else {
+                    console.log("Successfully inserted prompt to Supabase prompts table.");
+                }
             }
         } catch (err) {
             console.error("Error retrieving Supabase session in sendMessage:", err);
@@ -1206,6 +1218,115 @@ async function signOut() {
     }
 }
 
+// Helper to render message with custom metadata (avatar and name) in real-time timeline
+async function renderStaticMessageWithMetadata(authorName, authorAvatar, promptText) {
+    const rowDiv = document.createElement("div");
+    rowDiv.className = "message-row user-row";
+    const contentDiv = document.createElement("div");
+    contentDiv.className = "message-content";
+
+    const avatarEl = document.createElement("div");
+    avatarEl.className = "avatar";
+    if (authorAvatar) {
+        avatarEl.innerHTML = `<img src="${authorAvatar}" alt="${authorName}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">`;
+    } else {
+        avatarEl.textContent = authorName ? authorName.charAt(0).toUpperCase() : "U";
+    }
+
+    const textBody = document.createElement("div");
+    textBody.className = "text-body";
+
+    const nameLabel = document.createElement("strong");
+    nameLabel.style.display = "block";
+    nameLabel.style.fontSize = "12px";
+    nameLabel.style.color = "var(--text-muted)";
+    nameLabel.style.marginBottom = "4px";
+    nameLabel.textContent = authorName || "GitHub User";
+
+    const contentText = document.createElement("div");
+    contentText.textContent = promptText;
+
+    textBody.appendChild(nameLabel);
+    textBody.appendChild(contentText);
+    contentDiv.appendChild(avatarEl);
+    contentDiv.appendChild(textBody);
+    rowDiv.appendChild(contentDiv);
+    chatBox.appendChild(rowDiv);
+
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+// Fetch all prompts from public.prompts including user metadata
+async function loadAllPromptsFromSupabase() {
+    if (!supabaseClient) return;
+    try {
+        const { data, error } = await supabaseClient
+            .from('prompts')
+            .select('id, prompt, content, created_at, user_id, users (username, avatar_url)')
+            .order('created_at', { ascending: true });
+
+        if (error) {
+            console.error("Error fetching prompts from Supabase public.prompts:", error);
+            return;
+        }
+
+        if (data && data.length > 0) {
+            chatBox.innerHTML = "";
+            data.forEach(item => {
+                const authorName = item.users?.username || "GitHub User";
+                const authorAvatar = item.users?.avatar_url || "";
+                const promptText = item.prompt || item.content || "";
+                renderStaticMessageWithMetadata(authorName, authorAvatar, promptText);
+            });
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+    } catch (err) {
+        console.error("Exception in loadAllPromptsFromSupabase:", err);
+    }
+}
+
+// Enable Supabase Realtime subscription on public.prompts table
+function setupPromptsRealtimeSubscription() {
+    if (!supabaseClient) return;
+    try {
+        const channel = supabaseClient
+            .channel('schema-db-changes')
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'prompts'
+                },
+                async (payload) => {
+                    console.log('Realtime INSERT received on public.prompts:', payload);
+                    const newRow = payload.new;
+                    if (newRow) {
+                        try {
+                            const { data: userData, error } = await supabaseClient
+                                .from('users')
+                                .select('username, avatar_url')
+                                .eq('id', newRow.user_id)
+                                .single();
+
+                            const authorName = userData?.username || "GitHub User";
+                            const authorAvatar = userData?.avatar_url || "";
+                            const promptText = newRow.prompt || newRow.content || "";
+
+                            renderStaticMessageWithMetadata(authorName, authorAvatar, promptText);
+                        } catch (userErr) {
+                            console.error("Error loading user metadata in Realtime callback:", userErr);
+                            renderStaticMessageWithMetadata("GitHub User", "", newRow.prompt || newRow.content || "");
+                        }
+                    }
+                }
+            )
+            .subscribe();
+    } catch (err) {
+        console.error("Failed to enable Supabase Realtime subscription:", err);
+    }
+}
+
 // GitHub User Authentication session handling and element binding
 async function initAuthSession() {
     const authLoading = document.getElementById("auth-loading");
@@ -1257,6 +1378,11 @@ async function initAuthSession() {
                 authLoading.classList.add("hidden");
                 authGuest.classList.add("hidden");
                 authUser.classList.remove("hidden");
+
+                // Connect UI to Supabase Prompts feed and enable realtime updates
+                loadAllPromptsFromSupabase();
+                setupPromptsRealtimeSubscription();
+
                 return;
             }
         } catch (err) {
