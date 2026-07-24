@@ -813,14 +813,58 @@ async function sendMessage() {
 
     toggleTyping(true);
 
+    // Retrieve active Supabase session and access token if client is initialized
+    let hasSupabaseSession = false;
+    let supabaseAccessToken = "";
+    if (window.supabaseInstance) {
+        try {
+            const { data: { session } } = await window.supabaseInstance.auth.getSession();
+            if (session && session.access_token) {
+                hasSupabaseSession = true;
+                supabaseAccessToken = session.access_token;
+            }
+        } catch (err) {
+            console.error("Error retrieving Supabase session in sendMessage:", err);
+        }
+    }
+
     try {
-        const response = await fetch(`${API_BASE}/chat`, {
-            method: "POST",
-            headers: {
+        let response;
+        const endpoint = `${window.NEXT_PUBLIC_API_URL || API_BASE || ""}/chat`;
+
+        if (hasSupabaseSession && selectedFiles.length === 0) {
+            // Send JSON payload directly as requested in Requirement 3
+            const headers = {
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+                "Authorization": `Bearer ${supabaseAccessToken}`
+            };
+            const payload = {
+                "prompt": text,
+                "search_web": isWebSearchEnabled
+            };
+            if (currentChatId) {
+                payload["chat_id"] = currentChatId;
+            }
+            response = await fetch(endpoint, {
+                method: "POST",
+                headers: headers,
+                body: JSON.stringify(payload)
+            });
+        } else {
+            // Standard form-data payload with auth header if logged in
+            const headers = {
                 "Accept": "text/event-stream"
-            },
-            body: formData
-        });
+            };
+            if (supabaseAccessToken) {
+                headers["Authorization"] = `Bearer ${supabaseAccessToken}`;
+            }
+            response = await fetch(endpoint, {
+                method: "POST",
+                headers: headers,
+                body: formData
+            });
+        }
 
         toggleTyping(false);
 
@@ -1109,6 +1153,59 @@ if (window.innerWidth <= 768) {
     openSidebarBtn.classList.remove("hidden");
 }
 
+// Initialize Supabase Client if env variables are available
+let supabaseClient = null;
+const supabaseUrl = window.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = window.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+if (supabaseUrl && supabaseAnonKey && typeof supabase !== 'undefined') {
+    try {
+        supabaseClient = supabase.createClient(supabaseUrl, supabaseAnonKey);
+        window.supabaseInstance = supabaseClient;
+        console.log("Supabase Client successfully initialized from Edge config.");
+    } catch (err) {
+        console.error("Failed to initialize Supabase Client:", err);
+    }
+}
+
+// GitHub Authentication Functions using Supabase Client
+async function signInWithGitHub() {
+    if (!supabaseClient) {
+        console.error("Supabase client is not initialized.");
+        return;
+    }
+    try {
+        const { data, error } = await supabaseClient.auth.signInWithOAuth({
+            provider: 'github',
+            options: {
+                redirectTo: window.location.origin
+            }
+        });
+        if (error) throw error;
+    } catch (err) {
+        console.error("Supabase sign in with GitHub error:", err);
+        showToast("มีข้อผิดพลาดในการเข้าสู่ระบบด้วย GitHub", "error");
+    }
+}
+
+async function signOut() {
+    if (!supabaseClient) {
+        console.error("Supabase client is not initialized.");
+        return;
+    }
+    try {
+        const { error } = await supabaseClient.auth.signOut();
+        if (error) throw error;
+        showToast("ออกจากระบบ GitHub เรียบร้อยแล้ว", "success");
+        setTimeout(() => {
+            window.location.reload();
+        }, 1000);
+    } catch (err) {
+        console.error("Supabase sign out error:", err);
+        showToast("มีข้อผิดพลาดในการออกจากระบบ", "error");
+    }
+}
+
 // GitHub User Authentication session handling and element binding
 async function initAuthSession() {
     const authLoading = document.getElementById("auth-loading");
@@ -1118,28 +1215,43 @@ async function initAuthSession() {
     const userUsername = document.getElementById("user-username");
     const userEmail = document.getElementById("user-email");
     const githubSigninBtn = document.getElementById("github-signin-btn");
+    const logoutBtn = document.getElementById("logout-btn");
 
     if (!authLoading || !authGuest || !authUser) return;
 
-    // Set GitHub Auth sign-in href dynamically based on API_BASE
-    if (githubSigninBtn) {
-        githubSigninBtn.href = `${API_BASE || ""}/auth/github/login`;
-    }
+    // 1. If Supabase Client is initialized, check session state and bind OAuth sign-in / sign-out
+    if (supabaseClient) {
+        if (githubSigninBtn) {
+            // Remove traditional redirection and bind signInWithGitHub
+            githubSigninBtn.removeAttribute("href");
+            githubSigninBtn.style.cursor = "pointer";
+            githubSigninBtn.onclick = async (e) => {
+                e.preventDefault();
+                await signInWithGitHub();
+            };
+        }
 
-    try {
-        const response = await fetch(`${API_BASE || ""}/auth/me`);
-        if (response.ok) {
-            const userData = await response.json();
-            if (userData && (userData.github_id || userData.username)) {
-                // User is authenticated successfully
+        if (logoutBtn) {
+            logoutBtn.onclick = async (e) => {
+                e.preventDefault();
+                await signOut();
+            };
+        }
+
+        try {
+            const { data: { session }, error } = await supabaseClient.auth.getSession();
+            if (error) throw error;
+            if (session && session.user) {
+                // User is authenticated via Supabase session
+                const user = session.user;
                 if (userAvatar) {
-                    userAvatar.src = userData.avatar_url || "https://github.com/identicons/guest.png";
+                    userAvatar.src = user.user_metadata?.avatar_url || "https://github.com/identicons/guest.png";
                 }
                 if (userUsername) {
-                    userUsername.textContent = userData.name || userData.username || "GitHub User";
+                    userUsername.textContent = user.user_metadata?.full_name || user.user_metadata?.user_name || "GitHub User";
                 }
                 if (userEmail) {
-                    userEmail.textContent = userData.email || `@${userData.username || "user"}`;
+                    userEmail.textContent = user.email || "";
                 }
 
                 authLoading.classList.add("hidden");
@@ -1147,37 +1259,65 @@ async function initAuthSession() {
                 authUser.classList.remove("hidden");
                 return;
             }
+        } catch (err) {
+            console.error("Error retrieving Supabase auth session:", err);
         }
-    } catch (err) {
-        console.error("Error verifying active GitHub login session:", err);
+    } else {
+        // 2. Fallback: Use backend-managed cookie session check
+        if (githubSigninBtn) {
+            githubSigninBtn.href = `${API_BASE || ""}/auth/github/login`;
+        }
+        if (logoutBtn) {
+            logoutBtn.onclick = async (e) => {
+                e.preventDefault();
+                try {
+                    const response = await fetch(`${API_BASE || ""}/auth/logout`);
+                    if (response.ok || response.redirected) {
+                        showToast("ออกจากระบบ GitHub เรียบร้อยแล้ว", "success");
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 1000);
+                    } else {
+                        showToast("มีข้อผิดพลาดในการออกจากระบบ", "error");
+                    }
+                } catch (err) {
+                    console.error("Logout request failed:", err);
+                    showToast("มีข้อผิดพลาดในการเชื่อมต่อเครือข่าย", "error");
+                }
+            };
+        }
+
+        try {
+            const response = await fetch(`${API_BASE || ""}/auth/me`);
+            if (response.ok) {
+                const userData = await response.json();
+                if (userData && (userData.github_id || userData.username)) {
+                    // User is authenticated successfully
+                    if (userAvatar) {
+                        userAvatar.src = userData.avatar_url || "https://github.com/identicons/guest.png";
+                    }
+                    if (userUsername) {
+                        userUsername.textContent = userData.name || userData.username || "GitHub User";
+                    }
+                    if (userEmail) {
+                        userEmail.textContent = userData.email || `@${userData.username || "user"}`;
+                    }
+
+                    authLoading.classList.add("hidden");
+                    authGuest.classList.add("hidden");
+                    authUser.classList.remove("hidden");
+                    return;
+                }
+            }
+        } catch (err) {
+            console.error("Error verifying active GitHub login session:", err);
+        }
     }
 
     // Default: Not authenticated (Guest state)
     authLoading.classList.add("hidden");
     authUser.classList.add("hidden");
     authGuest.classList.remove("hidden");
-}
-
-// Log out handler with automatic session redirection
-const logoutBtnEl = document.getElementById("logout-btn");
-if (logoutBtnEl) {
-    logoutBtnEl.addEventListener("click", async (e) => {
-        e.preventDefault();
-        try {
-            const response = await fetch(`${API_BASE || ""}/auth/logout`);
-            if (response.ok || response.redirected) {
-                showToast("ออกจากระบบ GitHub เรียบร้อยแล้ว", "success");
-                setTimeout(() => {
-                    window.location.reload();
-                }, 1000);
-            } else {
-                showToast("มีข้อผิดพลาดในการออกจากระบบ", "error");
-            }
-        } catch (err) {
-            console.error("Logout request failed:", err);
-            showToast("มีข้อผิดพลาดในการเชื่อมต่อเครือข่าย", "error");
-        }
-    });
 }
 
 loadChatHistoryList();
