@@ -1,6 +1,11 @@
 import os
 import httpx
 import json
+from dotenv import load_dotenv
+
+# โหลด .env เป็น safety net กรณีรันแยกจาก app.py
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env"))
+
 from agent.tools import (
     read_file_tool, write_file_tool, list_directory_tool,
     patch_file_tool, view_dir_tool, execute_command_tool,
