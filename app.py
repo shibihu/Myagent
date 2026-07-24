@@ -62,6 +62,13 @@ async def verify_api_token(x_api_token: Optional[str] = Header(None, alias="X-AP
 
 app = FastAPI()
 
+from database import check_db_connection
+
+@app.on_event("startup")
+async def startup_db_check():
+    """Lightweight startup database connectivity check."""
+    check_db_connection()
+
 # Configured CORS Middleware for Localhost, Vercel, and Ngrok Tunnels
 app.add_middleware(
     CORSMiddleware,

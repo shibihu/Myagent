@@ -2,6 +2,9 @@ import os
 import json
 import asyncio
 from typing import Dict, List, Optional
+from sqlalchemy import Column, Integer, String, DateTime, Text, create_engine, text
+from sqlalchemy.orm import declarative_base, sessionmaker
+import datetime
 
 # Local files paths for persistent storage
 CHATS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chats.json")
@@ -37,13 +40,70 @@ def _save_json_file(filepath: str, data) -> None:
             except Exception:
                 pass
 
+# ==============================================================================
+# SQLALCHEMY ORM MODELS & DATABASE CONFIGURATION
+# ==============================================================================
+
+Base = declarative_base()
+
+class Users(Base):
+    """
+    SQLAlchemy model mapping directly to the existing 'users' table in Supabase.
+    """
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    github_id = Column(String(255), unique=True, index=True, nullable=False)
+    username = Column(String(255), nullable=False)
+    prompt_content = Column(Text, nullable=True)
+
+# Fetch Database URL securely from Environment
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Initialize Engine and SessionLocal
+SessionLocal = None
+engine = None
+
+if DATABASE_URL:
+    try:
+        engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        # Safely create tables if they do not exist
+        Base.metadata.create_all(bind=engine)
+        print("[Local-First DB] SQLAlchemy connection handler initialized successfully.")
+    except Exception as e:
+        print(f"[Local-First DB] Warning: Failed to initialize database engine for {DATABASE_URL}: {e}")
+
+def check_db_connection() -> bool:
+    """
+    Startup health-check / ping test to verify connectivity to Supabase PostgreSQL.
+    """
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        print("[DB-Health] Database connection skipped: DATABASE_URL not set in environment.")
+        return False
+    try:
+        ping_engine = create_engine(db_url, pool_pre_ping=True)
+        with ping_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        print("[DB-Health] Database connection established successfully to Supabase PostgreSQL!")
+        return True
+    except Exception as e:
+        print(f"[DB-Health] Database connection FAILED: {str(e)}")
+        return False
+
+# ==============================================================================
+# LOCAL FIRST DATABASE HELPER WITH SUPABASE FAIL-SAFE INTEGRATION
+# ==============================================================================
+
 class LocalFirstDatabaseHelper:
     """
     A 100% database-free, local-first helper that manages chat histories and
     memories entirely in RAM and persists them locally as structured JSON files.
 
-    This avoids any external database connection delay, network issues, or
-    Supabase RLS/timeout blockages, making the backend completely independent.
+    If DATABASE_URL is configured, it dynamically synchronizes user records
+    into the Supabase PostgreSQL 'users' table using SQLAlchemy ORM.
     """
     def __init__(self):
         # Load initial local records into cache memory on startup
@@ -53,30 +113,97 @@ class LocalFirstDatabaseHelper:
         print(f"[Local-First DB] Successfully initialized. Loaded {len(self.chats)} chats, {len(self.memories.get('facts', []))} memories, and {len(self.users)} users.")
 
     async def get_user(self, github_id: str) -> Optional[dict]:
-        """Fetch user data by GitHub ID."""
+        """Fetch user data by GitHub ID from Supabase PostgreSQL or fallback to local cache."""
+        if SessionLocal:
+            try:
+                # Synchronous SQLAlchemy query inside try-except
+                db = SessionLocal()
+                try:
+                    user_record = db.query(Users).filter(Users.github_id == str(github_id)).first()
+                    if user_record:
+                        # Extract email/avatar metadata from prompt_content if stored as JSON
+                        email = None
+                        avatar_url = None
+                        if user_record.prompt_content:
+                            try:
+                                meta = json.loads(user_record.prompt_content)
+                                if isinstance(meta, dict):
+                                    email = meta.get("email")
+                                    avatar_url = meta.get("avatar_url")
+                            except Exception:
+                                pass
+                        return {
+                            "github_id": user_record.github_id,
+                            "username": user_record.username,
+                            "email": email,
+                            "avatar_url": avatar_url,
+                            "created_at": user_record.created_at.isoformat() if user_record.created_at else None,
+                            "prompt_content": user_record.prompt_content
+                        }
+                finally:
+                    db.close()
+            except Exception as e:
+                print(f"[Local-First DB] Warning: Failed to query users from Supabase: {e}")
+
+        # Fallback to local users.json
         async with _file_lock:
             return self.users.get(str(github_id))
 
-    async def save_or_update_user(self, github_id: str, username: str, email: Optional[str], avatar_url: Optional[str]) -> dict:
-        """Saves or updates user records upon successful login."""
-        import datetime
+    async def save_or_update_user(self, github_id: str, username: str, email: Optional[str] = None, avatar_url: Optional[str] = None) -> dict:
+        """Saves or updates user records in Supabase PostgreSQL or fallback to local cache."""
+        now_dt = datetime.datetime.utcnow()
+        g_id = str(github_id)
+
+        if SessionLocal:
+            try:
+                db = SessionLocal()
+                try:
+                    user_record = db.query(Users).filter(Users.github_id == g_id).first()
+                    meta = {"avatar_url": avatar_url, "email": email}
+                    meta_str = json.dumps(meta)
+
+                    if user_record:
+                        user_record.username = username
+                        user_record.prompt_content = meta_str
+                    else:
+                        user_record = Users(
+                            github_id=g_id,
+                            username=username,
+                            created_at=now_dt,
+                            prompt_content=meta_str
+                        )
+                        db.add(user_record)
+                    db.commit()
+                    db.refresh(user_record)
+                    return {
+                        "github_id": user_record.github_id,
+                        "username": user_record.username,
+                        "email": email,
+                        "avatar_url": avatar_url,
+                        "created_at": user_record.created_at.isoformat() if user_record.created_at else None,
+                        "prompt_content": user_record.prompt_content
+                    }
+                finally:
+                    db.close()
+            except Exception as e:
+                print(f"[Local-First DB] Warning: Failed to save user to Supabase: {e}")
+
+        # Fallback to local users.json file persistence
         async with _file_lock:
-            g_id = str(github_id)
-            now = datetime.datetime.utcnow().isoformat()
             if g_id in self.users:
                 user = self.users[g_id]
                 user["username"] = username
                 user["email"] = email
                 user["avatar_url"] = avatar_url
-                user["last_login"] = now
+                user["last_login"] = now_dt.isoformat()
             else:
                 user = {
                     "github_id": g_id,
                     "username": username,
                     "email": email,
                     "avatar_url": avatar_url,
-                    "created_at": now,
-                    "last_login": now
+                    "created_at": now_dt.isoformat(),
+                    "last_login": now_dt.isoformat()
                 }
             self.users[g_id] = user
             _save_json_file(USERS_FILE, self.users)
