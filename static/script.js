@@ -1109,5 +1109,77 @@ if (window.innerWidth <= 768) {
     openSidebarBtn.classList.remove("hidden");
 }
 
+// GitHub User Authentication session handling and element binding
+async function initAuthSession() {
+    const authLoading = document.getElementById("auth-loading");
+    const authGuest = document.getElementById("auth-guest");
+    const authUser = document.getElementById("auth-user");
+    const userAvatar = document.getElementById("user-avatar");
+    const userUsername = document.getElementById("user-username");
+    const userEmail = document.getElementById("user-email");
+    const githubSigninBtn = document.getElementById("github-signin-btn");
+
+    if (!authLoading || !authGuest || !authUser) return;
+
+    // Set GitHub Auth sign-in href dynamically based on API_BASE
+    if (githubSigninBtn) {
+        githubSigninBtn.href = `${API_BASE || ""}/auth/github/login`;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE || ""}/auth/me`);
+        if (response.ok) {
+            const userData = await response.json();
+            if (userData && (userData.github_id || userData.username)) {
+                // User is authenticated successfully
+                if (userAvatar) {
+                    userAvatar.src = userData.avatar_url || "https://github.com/identicons/guest.png";
+                }
+                if (userUsername) {
+                    userUsername.textContent = userData.name || userData.username || "GitHub User";
+                }
+                if (userEmail) {
+                    userEmail.textContent = userData.email || `@${userData.username || "user"}`;
+                }
+
+                authLoading.classList.add("hidden");
+                authGuest.classList.add("hidden");
+                authUser.classList.remove("hidden");
+                return;
+            }
+        }
+    } catch (err) {
+        console.error("Error verifying active GitHub login session:", err);
+    }
+
+    // Default: Not authenticated (Guest state)
+    authLoading.classList.add("hidden");
+    authUser.classList.add("hidden");
+    authGuest.classList.remove("hidden");
+}
+
+// Log out handler with automatic session redirection
+const logoutBtnEl = document.getElementById("logout-btn");
+if (logoutBtnEl) {
+    logoutBtnEl.addEventListener("click", async (e) => {
+        e.preventDefault();
+        try {
+            const response = await fetch(`${API_BASE || ""}/auth/logout`);
+            if (response.ok || response.redirected) {
+                showToast("ออกจากระบบ GitHub เรียบร้อยแล้ว", "success");
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
+            } else {
+                showToast("มีข้อผิดพลาดในการออกจากระบบ", "error");
+            }
+        } catch (err) {
+            console.error("Logout request failed:", err);
+            showToast("มีข้อผิดพลาดในการเชื่อมต่อเครือข่าย", "error");
+        }
+    });
+}
+
 loadChatHistoryList();
 loadChatFromLocalStorage();
+initAuthSession();
