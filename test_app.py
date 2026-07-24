@@ -347,5 +347,94 @@ class AppTests(unittest.TestCase):
                 result = asyncio.run(agent_instance.get_response("Create leaderboard script", request_context=ctx))
                 self.assertIn("Roblox session detected", result["reply"])
 
+    def test_roblox_mcp_tool_routing_and_self_correction(self):
+        """Test Roblox Studio MCP tool routing, intent reasoning, path resolution, and self-correction retries."""
+        from agent.mcp_registry import get_mcp_tools_schemas, resolve_target_path
+
+        # 1. Verify dynamic schema loader returns 27 tools
+        schemas = get_mcp_tools_schemas()
+        self.assertEqual(len(schemas), 27)
+        tool_names = [t["function"]["name"] for t in schemas]
+        self.assertIn("roblox_create_instance", tool_names)
+        self.assertIn("roblox_update_script_source", tool_names)
+
+        # 2. Verify target path resolver
+        resolved = resolve_target_path("leaderstats")
+        self.assertEqual(resolved, "game.ServerScriptService")
+        resolved_ui = resolve_target_path("ui")
+        self.assertEqual(resolved_ui, "game.StarterGui")
+
+        # 3. Verify self-correction retry feedback loop
+        agent_instance = ChatAgent()
+
+        call_count = 0
+        async def mock_execute_mcp(tool_name, args):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First attempt fails due to missing game. prefix in scriptPath
+                self.assertEqual(args["scriptPath"], "Workspace.MyScript")
+                return {"status": "error", "message": "Invalid hierarchy root path"}
+            else:
+                # Second attempt succeeds after automatic correction prepends game.
+                self.assertEqual(args["scriptPath"], "game.Workspace.MyScript")
+                return {"status": "success", "result": "Source updated!"}
+
+        with patch("agent.mcp_registry.execute_roblox_mcp_tool", side_effect=mock_execute_mcp):
+            # We patch trigger_status as well
+            async def trigger_status(msg):
+                pass
+
+            class MockResponse:
+                def __init__(self, json_data, status_code=200):
+                    self._json = json_data
+                    self.status_code = status_code
+                def json(self):
+                    return self._json
+
+            # We mock the sequence of two post responses: first returns a tool call, second returns final reply
+            mock_responses = [
+                MockResponse({
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [{
+                                "id": "call_roblox1",
+                                "type": "function",
+                                "function": {
+                                    "name": "roblox_update_script_source",
+                                    "arguments": json.dumps({"scriptPath": "Workspace.MyScript", "source": "print(1)"})
+                                }
+                            }]
+                        }
+                    }],
+                    "usage": {"total_tokens": 50}
+                }),
+                MockResponse({
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": "Updated successfully.",
+                            "tool_calls": None
+                        }
+                    }],
+                    "usage": {"total_tokens": 100}
+                })
+            ]
+
+            response_iterator = iter(mock_responses)
+
+            async def mock_post(*args, **kwargs):
+                return next(response_iterator)
+
+            with patch.dict(os.environ, {"GROQ_API_KEY": "mock_key"}):
+                agent_instance = ChatAgent()
+                with patch("httpx.AsyncClient.post", side_effect=mock_post):
+                    ctx = {"headers": {"User-Agent": "Roblox/WinInet"}}
+                    result = asyncio.run(agent_instance.get_response("Update the script source", request_context=ctx))
+                    self.assertEqual(result["reply"], "Updated successfully.")
+                    self.assertEqual(call_count, 2)
+
 if __name__ == "__main__":
     unittest.main()
