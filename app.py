@@ -3,6 +3,10 @@ import re
 import uuid
 import json
 import asyncio
+from dotenv import load_dotenv
+
+# Load local environment variables from .env file on startup
+load_dotenv()
 from typing import Optional, List
 import io
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Form, File, UploadFile, Header, Depends

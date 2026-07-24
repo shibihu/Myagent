@@ -19,6 +19,14 @@ class ChatAgent:
     async def get_response(self, prompt: str, history: list = None, status_callback=None, request_context: dict = None) -> dict:
         """ระบบสลับสมองข้ามค่ายอัตโนมัติพร้อมระบบ Tool Calling (Function Calling) และ Sliding Window History"""
         
+        # Load keys dynamically from environment on every request to pick up runtime updates
+        from dotenv import load_dotenv
+        load_dotenv()
+        self.groq_key = os.getenv("GROQ_API_KEY", "")
+        self.gemini_key = os.getenv("GEMINI_API_KEY", "")
+        self.openai_key = os.getenv("OPENAI_API_KEY", "")
+        self.openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
+
         async def trigger_status(msg: str):
             if status_callback:
                 try:
@@ -495,7 +503,7 @@ class ChatAgent:
                                     "total_tokens": total_tokens
                                 }
                         else:
-                            print(f"[Brain Switcher]: Groq failed with code {response.status_code}")
+                            print(f"[Brain Switcher]: Groq failed with code {response.status_code}. Response: {response.text}")
                             break
             except Exception as e:
                 print(f"[Brain Switcher]: Groq เชื่อมต่อไม่ได้ -> {e}")
@@ -610,7 +618,7 @@ class ChatAgent:
                                     "total_tokens": 0
                                 }
                         else:
-                            print(f"[Brain Switcher]: Gemini failed with code {response.status_code}")
+                            print(f"[Brain Switcher]: Gemini failed with code {response.status_code}. Response: {response.text}")
                             break
             except Exception as e:
                 print(f"[Brain Switcher]: Gemini เชื่อมต่อไม่ได้ -> {e}")
@@ -699,7 +707,7 @@ class ChatAgent:
                                     "total_tokens": total_tokens
                                 }
                         else:
-                            print(f"[Brain Switcher]: OpenAI failed with code {response.status_code}")
+                            print(f"[Brain Switcher]: OpenAI failed with code {response.status_code}. Response: {response.text}")
                             break
             except Exception as e:
                 print(f"[Brain Switcher]: OpenAI เชื่อมต่อไม่ได้ -> {e}")
@@ -788,7 +796,7 @@ class ChatAgent:
                                     "total_tokens": total_tokens
                                 }
                         else:
-                            print(f"[Brain Switcher]: OpenRouter failed with code {response.status_code}")
+                            print(f"[Brain Switcher]: OpenRouter failed with code {response.status_code}. Response: {response.text}")
                             break
             except Exception as e:
                 print(f"[Brain Switcher]: OpenRouter เชื่อมต่อไม่ได้ -> {e}")
