@@ -329,6 +329,17 @@ async def chat_endpoint(
 ):
     content_type = request.headers.get("content-type", "")
     
+    # Analyze Environment Context for Roblox Studio active connection
+    is_roblox = False
+    user_agent = request.headers.get("user-agent", "").lower()
+    if "roblox" in user_agent:
+        is_roblox = True
+    else:
+        for k, v in request.headers.items():
+            if "roblox" in k.lower() or "roblox" in v.lower():
+                is_roblox = True
+                break
+
     message = ""
     chat_id = None
     search_web = False
@@ -441,7 +452,7 @@ async def chat_endpoint(
 
             async def run_agent_task():
                 try:
-                    res = await agent.get_response(injected_message, history=sliding_history, status_callback=status_cb)
+                    res = await agent.get_response(injected_message, history=sliding_history, status_callback=status_cb, is_roblox=is_roblox)
 
                     # Add result to messages history chain and save
                     messages.append({
@@ -481,7 +492,7 @@ async def chat_endpoint(
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     # Standard JSON fallback for backward compatibility / tests
-    result = await agent.get_response(injected_message, history=sliding_history)
+    result = await agent.get_response(injected_message, history=sliding_history, is_roblox=is_roblox)
 
     messages.append({
         "role": "ai",
