@@ -3,10 +3,7 @@ import re
 import uuid
 import json
 import asyncio
-from dotenv import load_dotenv
-
-# Load local environment variables from .env file on startup
-load_dotenv()
+import httpx
 from typing import Optional, List
 import io
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Form, File, UploadFile, Header, Depends
@@ -18,6 +15,13 @@ from pydantic import BaseModel
 from agent.agent import ChatAgent
 from agent.ide_agent import IDEAgent
 from pypdf import PdfReader
+
+# Auth Imports
+import agent.auth as auth_mod
+from agent.auth import (
+    create_access_token,
+    get_current_user, get_current_user_or_api_client
+)
 
 # Import database module & helper
 from database import db_helper
@@ -183,6 +187,125 @@ async def get_favicon():
         return FileResponse(favicon_path, media_type="image/x-icon")
     raise HTTPException(status_code=404, detail="Favicon not found")
 
+# ==============================================================================
+# GITHUB OAUTH AUTHENTICATION ENDPOINTS
+# ==============================================================================
+
+from fastapi.responses import RedirectResponse
+
+@app.get("/auth/github/login")
+async def github_login():
+    """Redirects user to GitHub's OAuth authorization URL."""
+    # Use dynamic lookup to allow test patching and runtime env modifications
+    client_id = os.environ.get("GITHUB_CLIENT_ID") or auth_mod.GITHUB_CLIENT_ID
+    if not client_id:
+        raise HTTPException(
+            status_code=500,
+            detail="OAuth Configuration Error: GITHUB_CLIENT_ID is not configured in backend environment."
+        )
+    redirect_uri = "https://github.com/login/oauth/authorize"
+    scope = "read:user user:email"
+    return RedirectResponse(
+        url=f"{redirect_uri}?client_id={client_id}&scope={scope}"
+    )
+
+@app.get("/auth/github/callback")
+async def github_callback(code: str):
+    """Receives the authorization code, exchanges it for access_token, and authenticates user."""
+    client_id = os.environ.get("GITHUB_CLIENT_ID") or auth_mod.GITHUB_CLIENT_ID
+    client_secret = os.environ.get("GITHUB_CLIENT_SECRET") or auth_mod.GITHUB_CLIENT_SECRET
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=500,
+            detail="OAuth Configuration Error: GitHub credentials are not configured in backend environment."
+        )
+
+    # 1. Exchange code for access_token
+    token_url = "https://github.com/login/oauth/access_token"
+    headers = {"Accept": "application/json"}
+    payload = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            token_resp = await client.post(token_url, json=payload, headers=headers)
+            if token_resp.status_code != 200:
+                raise HTTPException(status_code=400, detail="Failed to exchange OAuth code with GitHub.")
+
+            token_data = token_resp.json()
+            access_token = token_data.get("access_token")
+            if not access_token:
+                raise HTTPException(status_code=400, detail=f"GitHub OAuth Error: {token_data.get('error_description', 'No access token returned.')}")
+
+            # 2. Retrieve user profile info
+            user_url = "https://api.github.com/user"
+            user_headers = {
+                "Authorization": f"token {access_token}",
+                "User-Agent": "MyAgent-AI-Auth"
+            }
+            user_resp = await client.get(user_url, headers=user_headers)
+            if user_resp.status_code != 200:
+                raise HTTPException(status_code=400, detail="Failed to retrieve user profile from GitHub.")
+
+            user_info = user_resp.json()
+            github_id = user_info.get("id")
+            username = user_info.get("login")
+            avatar_url = user_info.get("avatar_url")
+            email = user_info.get("email")
+
+            # 3. Retrieve user email if not public in profile
+            if not email:
+                emails_url = "https://api.github.com/user/emails"
+                emails_resp = await client.get(emails_url, headers=user_headers)
+                if emails_resp.status_code == 200:
+                    emails_data = emails_resp.json()
+                    for email_entry in emails_data:
+                        if email_entry.get("primary") and email_entry.get("verified"):
+                            email = email_entry.get("email")
+                            break
+
+            # 4. Persistence: save or update user in our database layer
+            user_record = await db_helper.save_or_update_user(
+                github_id=github_id,
+                username=username,
+                email=email,
+                avatar_url=avatar_url
+            )
+
+            # 5. Issue Custom Signed JWT Token
+            jwt_token = create_access_token({"sub": str(github_id), "username": username})
+
+            # 6. Set in secure cookie and redirect back to home page
+            response = RedirectResponse(url="/")
+            response.set_cookie(
+                key="access_token",
+                value=jwt_token,
+                httponly=True,
+                max_age=60 * 60 * 24 * 7,  # 7 days
+                samesite="lax"
+            )
+            return response
+
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=f"Authentication flow encountered fatal error: {str(e)}")
+
+@app.get("/auth/me")
+async def get_me(user = Depends(get_current_user)):
+    """Protected route to fetch authenticated user profile details."""
+    return user
+
+@app.get("/auth/logout")
+async def logout_user():
+    """Logs out the user by clearing session cookies."""
+    response = RedirectResponse(url="/")
+    response.delete_cookie("access_token")
+    return response
+
 @app.get("/chats")
 async def get_all_chats():
     # Return all chat sessions list
@@ -300,22 +423,6 @@ async def chat_endpoint(
     # Slicing Window: slice history to only send last 10 messages for optimized token usage
     sliding_history = messages[-10:] if len(messages) > 10 else messages
 
-    # Build request context for environment rules
-    headers_dict = dict(request.headers)
-    is_roblox_studio = False
-    for k, v in headers_dict.items():
-        if "roblox" in k.lower() or "roblox" in str(v).lower():
-            is_roblox_studio = True
-            break
-    if not is_roblox_studio and message:
-        if "roblox" in message.lower() or "studio session" in message.lower():
-            is_roblox_studio = True
-
-    request_context = {
-        "headers": headers_dict,
-        "is_roblox_studio": is_roblox_studio
-    }
-
     if "text/event-stream" in accept_header:
         from fastapi.responses import StreamingResponse
 
@@ -327,12 +434,7 @@ async def chat_endpoint(
 
             async def run_agent_task():
                 try:
-                    res = await agent.get_response(
-                        injected_message,
-                        history=sliding_history,
-                        status_callback=status_cb,
-                        request_context=request_context
-                    )
+                    res = await agent.get_response(injected_message, history=sliding_history, status_callback=status_cb)
 
                     # Add result to messages history chain and save
                     messages.append({
@@ -372,7 +474,7 @@ async def chat_endpoint(
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     # Standard JSON fallback for backward compatibility / tests
-    result = await agent.get_response(injected_message, history=sliding_history, request_context=request_context)
+    result = await agent.get_response(injected_message, history=sliding_history)
 
     messages.append({
         "role": "ai",
