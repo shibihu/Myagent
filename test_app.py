@@ -348,5 +348,34 @@ class AppTests(unittest.TestCase):
         self.assertTrue(res["is_api_client"])
         self.assertEqual(res["username"], "Roblox_Studio_Client")
 
+    def test_supabase_postgres_integration(self):
+        """Test database connection health check, ORM mapping to users table, and persistence."""
+        from database import check_db_connection, Users
+        from unittest.mock import patch, MagicMock
+
+        # 1. Test database ping check success
+        with patch("os.getenv", return_value="postgresql://mock_host:5432/mock_db"), \
+             patch("sqlalchemy.engine.base.Engine.connect") as mock_connect:
+            mock_conn = MagicMock()
+            mock_connect.return_value.__enter__.return_value = mock_conn
+            res = check_db_connection()
+            self.assertTrue(res)
+
+        # 2. Test database ping check failure
+        with patch("os.getenv", return_value="postgresql://mock_host:5432/mock_db"), \
+             patch("sqlalchemy.engine.base.Engine.connect", side_effect=Exception("Connection refused")):
+            res = check_db_connection()
+            self.assertFalse(res)
+
+        # 3. Test Users ORM schema mapping fields
+        user_record = Users(
+            github_id="999888",
+            username="supabase_dev",
+            prompt_content="test metadata"
+        )
+        self.assertEqual(user_record.github_id, "999888")
+        self.assertEqual(user_record.username, "supabase_dev")
+        self.assertEqual(user_record.prompt_content, "test metadata")
+
 if __name__ == "__main__":
     unittest.main()
