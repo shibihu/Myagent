@@ -172,12 +172,16 @@ class ListDirectoryRequest(BaseModel):
 async def index_page(request: Request):
     # Fetch NEXT_PUBLIC_API_URL if configured, so we can inject it dynamically into the index page
     backend_url = os.environ.get("NEXT_PUBLIC_API_URL", "")
+    supabase_url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL", "")
+    supabase_anon_key = os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY", "")
     return templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
             "request": request,
-            "NEXT_PUBLIC_API_URL": backend_url
+            "NEXT_PUBLIC_API_URL": backend_url,
+            "NEXT_PUBLIC_SUPABASE_URL": supabase_url,
+            "NEXT_PUBLIC_SUPABASE_ANON_KEY": supabase_anon_key
         }
     )
 
@@ -356,6 +360,8 @@ async def chat_endpoint(
         try:
             json_data = await request.json()
             message = json_data.get("message", "")
+            if not message and "prompt" in json_data:
+                message = json_data.get("prompt", "")
             chat_id = json_data.get("chat_id")
             search_web = json_data.get("search_web", False)
         except Exception:
