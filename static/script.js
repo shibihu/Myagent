@@ -1043,9 +1043,11 @@ function showCustomModal({ title, message, showInput = false, defaultValue = "",
 
 async function loadChatHistoryList() {
     try {
+        historyList.innerHTML = `<li class="auth-loading-state" style="padding: 10px 0; justify-content: center; display: flex;"><div class="spinner" style="width:16px; height:16px; border:2px solid rgba(255,255,255,0.2); border-top-color:#58a6ff; border-radius:50%; animation:spin-wheel 1s linear infinite;"></div></li>`;
         const res = await fetch(`${API_BASE}/chats`);
         if (!res.ok) {
             console.warn(`Failed to fetch chats history list: HTTP ${res.status}`);
+            historyList.innerHTML = "<li style='padding:10px; color:var(--text-muted); font-size:13px; text-align:center;'>ล้มเหลวในการโหลดรายการแชท</li>";
             return;
         }
         const contentType = res.headers.get("content-type") || "";
@@ -1172,9 +1174,11 @@ async function deleteChatSession(cId) {
 
 async function loadMemoriesList() {
     try {
+        memoryList.innerHTML = `<li class="auth-loading-state" style="padding: 10px 0; justify-content: center; display: flex;"><div class="spinner" style="width:16px; height:16px; border:2px solid rgba(255,255,255,0.2); border-top-color:#58a6ff; border-radius:50%; animation:spin-wheel 1s linear infinite;"></div></li>`;
         const res = await fetch(`${API_BASE}/memory`);
         if (!res.ok) {
             console.warn(`Failed to fetch memories: HTTP ${res.status}`);
+            memoryList.innerHTML = "<li style='padding:10px; color:var(--text-muted); font-size:13px; text-align:center;'>ล้มเหลวในการโหลดความจำ</li>";
             return;
         }
         const contentType = res.headers.get("content-type") || "";
@@ -1452,11 +1456,10 @@ async function initAuthSession() {
             };
         }
 
-        try {
-            const { data: { session }, error } = await supabaseClient.auth.getSession();
-            if (error) throw error;
+        // Setup direct session listener for Realtime State Changes
+        supabaseClient.auth.onAuthStateChange(async (event, session) => {
+            console.log("Supabase onAuthStateChange Event:", event);
             if (session && session.user) {
-                // User is authenticated via Supabase session
                 const user = session.user;
                 if (userAvatar) {
                     userAvatar.src = user.user_metadata?.avatar_url || "https://github.com/identicons/guest.png";
@@ -1472,10 +1475,25 @@ async function initAuthSession() {
                 authGuest.classList.add("hidden");
                 authUser.classList.remove("hidden");
 
-                // Connect UI to Supabase Prompts feed and enable realtime updates
+                // Fetch database prompts, active chats, and memories on session activation
                 loadAllPromptsFromSupabase();
                 setupPromptsRealtimeSubscription();
+                loadChatHistoryList();
+                if (!memoryDrawer.classList.contains("closed")) {
+                    loadMemoriesList();
+                }
+            } else {
+                authLoading.classList.add("hidden");
+                authUser.classList.add("hidden");
+                authGuest.classList.remove("hidden");
+            }
+        });
 
+        try {
+            const { data: { session }, error } = await supabaseClient.auth.getSession();
+            if (error) throw error;
+            if (session && session.user) {
+                // Initial session already present
                 return;
             }
         } catch (err) {
