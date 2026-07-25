@@ -863,10 +863,10 @@ async function sendMessage() {
 
     try {
         let response;
-        const endpoint = `${window.NEXT_PUBLIC_API_URL || API_BASE || ""}/chat`;
+        const endpoint = `${API_BASE || ""}/chat`;
 
         if (hasSupabaseSession && selectedFiles.length === 0) {
-            // Send JSON payload directly as requested in Requirement 3
+            // Send JSON payload directly to our FastAPI backend with Authorization token
             const headers = {
                 "Content-Type": "application/json",
                 "Accept": "text/event-stream",
