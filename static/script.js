@@ -1044,6 +1044,15 @@ function showCustomModal({ title, message, showInput = false, defaultValue = "",
 async function loadChatHistoryList() {
     try {
         const res = await fetch(`${API_BASE}/chats`);
+        if (!res.ok) {
+            console.warn(`Failed to fetch chats history list: HTTP ${res.status}`);
+            return;
+        }
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+            console.warn("Chats list endpoint did not return JSON payload.");
+            return;
+        }
         const list = await res.json();
         historyList.innerHTML = "";
         
@@ -1116,12 +1125,25 @@ async function loadChatHistoryList() {
 async function switchChatSession(cId) {
     currentChatId = cId;
     chatBox.innerHTML = "";
-    const res = await fetch(`${API_BASE}/chats/${cId}`);
-    const d = await res.json();
-    chatTitle.textContent = d.title;
-    currentChatMessages = d.messages || [];
-    currentChatMessages.forEach(m => renderStaticMessage(m.role, m.content, m.model, m.total_tokens));
-    saveChatToLocalStorage();
+    try {
+        const res = await fetch(`${API_BASE}/chats/${cId}`);
+        if (!res.ok) {
+            console.error(`Failed to fetch chat session ${cId}: HTTP ${res.status}`);
+            return;
+        }
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+            console.error("Chats detail endpoint did not return JSON payload.");
+            return;
+        }
+        const d = await res.json();
+        chatTitle.textContent = d.title;
+        currentChatMessages = d.messages || [];
+        currentChatMessages.forEach(m => renderStaticMessage(m.role, m.content, m.model, m.total_tokens));
+        saveChatToLocalStorage();
+    } catch (err) {
+        console.error("Error inside switchChatSession:", err);
+    }
     loadChatHistoryList();
 }
 
@@ -1148,7 +1170,30 @@ async function deleteChatSession(cId) {
     loadChatHistoryList();
 }
 
-async function loadMemoriesList() { const res = await fetch(`${API_BASE}/memory`); const d = await res.json(); memoryList.innerHTML = d.memories.length === 0 ? "<li>No memory</li>" : ""; d.memories.forEach((f, i) => { const li = document.createElement("li"); li.className = "memory-item"; li.innerHTML = `<span>${f}</span><button class="memory-delete-btn pop-btn" onclick="deleteMemoryFact(${i})">🗑️</button>`; memoryList.appendChild(li); }); }
+async function loadMemoriesList() {
+    try {
+        const res = await fetch(`${API_BASE}/memory`);
+        if (!res.ok) {
+            console.warn(`Failed to fetch memories: HTTP ${res.status}`);
+            return;
+        }
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+            console.warn("Memories endpoint did not return JSON payload.");
+            return;
+        }
+        const d = await res.json();
+        memoryList.innerHTML = d.memories.length === 0 ? "<li>No memory</li>" : "";
+        d.memories.forEach((f, i) => {
+            const li = document.createElement("li");
+            li.className = "memory-item";
+            li.innerHTML = `<span>${f}</span><button class="memory-delete-btn pop-btn" onclick="deleteMemoryFact(${i})">🗑️</button>`;
+            memoryList.appendChild(li);
+        });
+    } catch (e) {
+        console.error("Error in loadMemoriesList:", e);
+    }
+}
 async function deleteMemoryFact(i) { await fetch(`${API_BASE}/memory/${i}`, { method: "DELETE" }); loadMemoriesList(); }
 
 newChatBtn.onclick = () => {
@@ -1191,7 +1236,18 @@ let supabaseClient = null;
 const supabaseUrl = window.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = window.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-if (supabaseUrl && supabaseAnonKey && typeof supabase !== 'undefined') {
+function isValidHttpUrl(string) {
+    if (!string || typeof string !== "string") return false;
+    if (string.includes("{{") || string.includes("}}")) return false;
+    try {
+        const url = new URL(string);
+        return url.protocol === "http:" || url.protocol === "https:";
+    } catch (_) {
+        return false;
+    }
+}
+
+if (isValidHttpUrl(supabaseUrl) && supabaseAnonKey && !supabaseAnonKey.includes("{{") && typeof supabase !== 'undefined') {
     try {
         supabaseClient = supabase.createClient(supabaseUrl, supabaseAnonKey);
         window.supabaseInstance = supabaseClient;
@@ -1199,6 +1255,8 @@ if (supabaseUrl && supabaseAnonKey && typeof supabase !== 'undefined') {
     } catch (err) {
         console.error("Failed to initialize Supabase Client:", err);
     }
+} else {
+    console.log("Supabase Client initialization skipped: Invalid URL or missing/template keys.");
 }
 
 // GitHub Authentication Functions using Supabase Client
