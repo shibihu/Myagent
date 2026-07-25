@@ -331,192 +331,205 @@ async def chat_endpoint(
     request: Request,
     background_tasks: BackgroundTasks
 ):
-    content_type = request.headers.get("content-type", "")
-    
-    # Analyze Environment Context for Roblox Studio active connection
-    is_roblox = False
-    user_agent = request.headers.get("user-agent", "").lower()
-    if "roblox" in user_agent:
-        is_roblox = True
-    else:
-        for k, v in request.headers.items():
-            if "roblox" in k.lower() or "roblox" in v.lower():
-                is_roblox = True
-                break
+    try:
+        content_type = request.headers.get("content-type", "")
 
-    message = ""
-    chat_id = None
-    search_web = False
-    files_to_process = []
-    
-    if "multipart/form-data" in content_type:
-        form_data = await request.form()
-        message = form_data.get("message", "")
-        chat_id = form_data.get("chat_id")
-        search_web_val = form_data.get("search_web", "false")
-        search_web = search_web_val.lower() == "true"
-        files_to_process = form_data.getlist("files")
-    else:
-        try:
-            json_data = await request.json()
-            message = json_data.get("message", "")
-            if not message and "prompt" in json_data:
-                message = json_data.get("prompt", "")
-            chat_id = json_data.get("chat_id")
-            search_web = json_data.get("search_web", False)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid JSON or request payload")
-
-    files_context = ""
-    for file in files_to_process:
-        filename = file.filename
-        if not filename:
-            continue
-        content_bytes = await file.read()
-        if not content_bytes:
-            continue
-        ext = os.path.splitext(filename)[1].lower()
-        
-        if ext == ".txt":
-            try:
-                text_data = content_bytes.decode("utf-8", errors="ignore")
-                files_context += f"\n--- Start of File: {filename} ---\n{text_data}\n--- End of File: {filename} ---\n"
-            except Exception as e:
-                files_context += f"\n[Error parsing TXT File {filename}: {str(e)}]\n"
-        elif ext == ".pdf":
-            try:
-                pdf_file = io.BytesIO(content_bytes)
-                reader = PdfReader(pdf_file)
-                pdf_text = ""
-                for page in reader.pages:
-                    t = page.extract_text()
-                    if t:
-                        pdf_text += t + "\n"
-                files_context += f"\n--- Start of PDF File: {filename} ---\n{pdf_text}\n--- End of PDF File: {filename} ---\n"
-            except Exception as e:
-                files_context += f"\n[Error parsing PDF File {filename}: {str(e)}]\n"
-        elif ext in [".jpg", ".jpeg", ".png"]:
-            size_kb = len(content_bytes) / 1024
-            files_context += f"\n[Attached Image File: {filename} (Size: {size_kb:.2f} KB)]\n"
+        # Analyze Environment Context for Roblox Studio active connection
+        is_roblox = False
+        user_agent = request.headers.get("user-agent", "").lower()
+        if "roblox" in user_agent:
+            is_roblox = True
         else:
-            files_context += f"\n[Attached File: {filename} (Size: {len(content_bytes)} bytes)]\n"
-
-    memories_facts = await db_helper.get_memories()
-    
-    cid = chat_id
-    current_chat = await db_helper.get_chat_history(cid) if cid else None
-
-    if not cid or not current_chat or not current_chat.get("messages"):
-        cid = str(uuid.uuid4()) if not cid else cid
-        t_msg = message if message else (files_to_process[0].filename if files_to_process else "New Chat")
-        title = t_msg[:15] + "..." if len(t_msg) > 15 else t_msg
-        messages = []
-    else:
-        title = current_chat["title"]
-        messages = current_chat["messages"]
-
-    display_message = message
-    if files_to_process:
-        file_names = ", ".join([f"📎 {f.filename}" for f in files_to_process if f.filename])
-        if display_message:
-            display_message += f"\n\n({file_names})"
-        else:
-            display_message = file_names
-
-    messages.append({
-        "role": "user",
-        "content": display_message,
-        "model": None,
-        "total_tokens": 0
-    })
-
-    # Save user message to database temporarily before getting reply
-    await db_helper.save_chat_history(cid, title, messages)
-
-    agent_message = message
-    if files_context:
-        agent_message = f"{files_context}\n\nUser Message: {message}"
-
-    injected_message = agent_message
-    if memories_facts:
-        memory_context = "\n".join([f"- {f}" for f in memories_facts])
-        injected_message = f"[ข้อมูลความจำถาวรเกี่ยวกับผู้ใช้:\n{memory_context}]\n\nคำสั่งปัจจุบัน: {agent_message}"
-    
-    accept_header = request.headers.get("accept", "")
-
-    # Slicing Window: slice history to only send last 10 messages for optimized token usage
-    sliding_history = messages[-10:] if len(messages) > 10 else messages
-
-    if "text/event-stream" in accept_header:
-        from fastapi.responses import StreamingResponse
-
-        async def event_generator():
-            queue = asyncio.Queue()
-
-            async def status_cb(msg: str):
-                await queue.put({"type": "status", "message": msg})
-
-            async def run_agent_task():
-                try:
-                    res = await agent.get_response(injected_message, history=sliding_history, status_callback=status_cb, is_roblox=is_roblox)
-
-                    # Add result to messages history chain and save
-                    messages.append({
-                        "role": "ai",
-                        "content": res["reply"],
-                        "model": res["model"],
-                        "total_tokens": res["total_tokens"]
-                    })
-                    await db_helper.save_chat_history(cid, title, messages)
-
-                    # Extract memory in background
-                    background_tasks.add_task(extract_and_save_memory, message, res["reply"])
-
-                    # Send final event
-                    await queue.put({
-                        "type": "final",
-                        "chat_id": cid,
-                        "title": title,
-                        "reply": res["reply"],
-                        "model": res["model"],
-                        "total_tokens": res["total_tokens"]
-                    })
-                except Exception as e:
-                    await queue.put({"type": "error", "message": str(e)})
-                finally:
-                    await queue.put(None)
-
-            # Spawn agent runner task
-            asyncio.create_task(run_agent_task())
-
-            while True:
-                item = await queue.get()
-                if item is None:
+            for k, v in request.headers.items():
+                if "roblox" in k.lower() or "roblox" in v.lower():
+                    is_roblox = True
                     break
-                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
 
-        return StreamingResponse(event_generator(), media_type="text/event-stream")
+        message = ""
+        chat_id = None
+        search_web = False
+        files_to_process = []
 
-    # Standard JSON fallback for backward compatibility / tests
-    result = await agent.get_response(injected_message, history=sliding_history, is_roblox=is_roblox)
+        if "multipart/form-data" in content_type:
+            form_data = await request.form()
+            message = form_data.get("message", "")
+            chat_id = form_data.get("chat_id")
+            search_web_val = form_data.get("search_web", "false")
+            search_web = search_web_val.lower() == "true"
+            files_to_process = form_data.getlist("files")
+        else:
+            try:
+                json_data = await request.json()
+                message = json_data.get("message", "")
+                if not message and "prompt" in json_data:
+                    message = json_data.get("prompt", "")
+                chat_id = json_data.get("chat_id")
+                search_web = json_data.get("search_web", False)
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid JSON or request payload")
 
-    messages.append({
-        "role": "ai",
-        "content": result["reply"],
-        "model": result["model"],
-        "total_tokens": result["total_tokens"]
-    })
+        files_context = ""
+        for file in files_to_process:
+            filename = file.filename
+            if not filename:
+                continue
+            content_bytes = await file.read()
+            if not content_bytes:
+                continue
+            ext = os.path.splitext(filename)[1].lower()
 
-    await db_helper.save_chat_history(cid, title, messages)
-    background_tasks.add_task(extract_and_save_memory, message, result["reply"])
-    
-    return {
-        "chat_id": cid,
-        "title": title,
-        "reply": result["reply"],
-        "model": result["model"],
-        "total_tokens": result["total_tokens"]
-    }
+            if ext == ".txt":
+                try:
+                    text_data = content_bytes.decode("utf-8", errors="ignore")
+                    files_context += f"\n--- Start of File: {filename} ---\n{text_data}\n--- End of File: {filename} ---\n"
+                except Exception as e:
+                    files_context += f"\n[Error parsing TXT File {filename}: {str(e)}]\n"
+            elif ext == ".pdf":
+                try:
+                    pdf_file = io.BytesIO(content_bytes)
+                    reader = PdfReader(pdf_file)
+                    pdf_text = ""
+                    for page in reader.pages:
+                        t = page.extract_text()
+                        if t:
+                            pdf_text += t + "\n"
+                    files_context += f"\n--- Start of PDF File: {filename} ---\n{pdf_text}\n--- End of PDF File: {filename} ---\n"
+                except Exception as e:
+                    files_context += f"\n[Error parsing PDF File {filename}: {str(e)}]\n"
+            elif ext in [".jpg", ".jpeg", ".png"]:
+                size_kb = len(content_bytes) / 1024
+                files_context += f"\n[Attached Image File: {filename} (Size: {size_kb:.2f} KB)]\n"
+            else:
+                files_context += f"\n[Attached File: {filename} (Size: {len(content_bytes)} bytes)]\n"
+
+        memories_facts = await db_helper.get_memories()
+
+        cid = chat_id
+        current_chat = await db_helper.get_chat_history(cid) if cid else None
+
+        if not cid or not current_chat or not current_chat.get("messages"):
+            cid = str(uuid.uuid4()) if not cid else cid
+            t_msg = message if message else (files_to_process[0].filename if files_to_process else "New Chat")
+            title = t_msg[:15] + "..." if len(t_msg) > 15 else t_msg
+            messages = []
+        else:
+            title = current_chat["title"]
+            messages = current_chat["messages"]
+
+        display_message = message
+        if files_to_process:
+            file_names = ", ".join([f"📎 {f.filename}" for f in files_to_process if f.filename])
+            if display_message:
+                display_message += f"\n\n({file_names})"
+            else:
+                display_message = file_names
+
+        messages.append({
+            "role": "user",
+            "content": display_message,
+            "model": None,
+            "total_tokens": 0
+        })
+
+        # Save user message to database temporarily before getting reply
+        await db_helper.save_chat_history(cid, title, messages)
+
+        agent_message = message
+        if files_context:
+            agent_message = f"{files_context}\n\nUser Message: {message}"
+
+        injected_message = agent_message
+        if memories_facts:
+            memory_context = "\n".join([f"- {f}" for f in memories_facts])
+            injected_message = f"[ข้อมูลความจำถาวรเกี่ยวกับผู้ใช้:\n{memory_context}]\n\nคำสั่งปัจจุบัน: {agent_message}"
+
+        accept_header = request.headers.get("accept", "")
+
+        # Slicing Window: slice history to only send last 10 messages for optimized token usage
+        sliding_history = messages[-10:] if len(messages) > 10 else messages
+
+        if "text/event-stream" in accept_header:
+            from fastapi.responses import StreamingResponse
+
+            async def event_generator():
+                queue = asyncio.Queue()
+
+                async def status_cb(msg: str):
+                    await queue.put({"type": "status", "message": msg})
+
+                async def run_agent_task():
+                    try:
+                        res = await agent.get_response(injected_message, history=sliding_history, status_callback=status_cb, is_roblox=is_roblox)
+
+                        # Add result to messages history chain and save
+                        messages.append({
+                            "role": "ai",
+                            "content": res["reply"],
+                            "model": res["model"],
+                            "total_tokens": res["total_tokens"]
+                        })
+                        await db_helper.save_chat_history(cid, title, messages)
+
+                        # Extract memory in background
+                        background_tasks.add_task(extract_and_save_memory, message, res["reply"])
+
+                        # Send final event
+                        await queue.put({
+                            "type": "final",
+                            "chat_id": cid,
+                            "title": title,
+                            "reply": res["reply"],
+                            "model": res["model"],
+                            "total_tokens": res["total_tokens"]
+                        })
+                    except Exception as e:
+                        await queue.put({"type": "error", "message": str(e)})
+                    finally:
+                        await queue.put(None)
+
+                # Spawn agent runner task
+                asyncio.create_task(run_agent_task())
+
+                while True:
+                    item = await queue.get()
+                    if item is None:
+                        break
+                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+
+            return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+        # Standard JSON fallback for backward compatibility / tests
+        result = await agent.get_response(injected_message, history=sliding_history, is_roblox=is_roblox)
+
+        messages.append({
+            "role": "ai",
+            "content": result["reply"],
+            "model": result["model"],
+            "total_tokens": result["total_tokens"]
+        })
+
+        await db_helper.save_chat_history(cid, title, messages)
+        background_tasks.add_task(extract_and_save_memory, message, result["reply"])
+
+        return {
+            "chat_id": cid,
+            "title": title,
+            "reply": result["reply"],
+            "model": result["model"],
+            "total_tokens": result["total_tokens"]
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        accept_header = request.headers.get("accept", "")
+        if "text/event-stream" in accept_header:
+            from fastapi.responses import StreamingResponse
+            async def error_generator():
+                err_data = {"type": "error", "message": f"Server Error: {str(e)}"}
+                yield f"data: {json.dumps(err_data, ensure_ascii=False)}\n\n"
+            return StreamingResponse(error_generator(), media_type="text/event-stream")
+        else:
+            raise HTTPException(status_code=500, detail=f"Server Internal Error: {str(e)}")
 
 @app.delete("/chats/{chat_id}")
 async def delete_chat_session(chat_id: str):

@@ -61,17 +61,29 @@ class Users(Base):
 # Fetch Database URL securely from Environment
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+from sqlalchemy.pool import NullPool
+
 # Initialize Engine and SessionLocal
 SessionLocal = None
 engine = None
 
 if DATABASE_URL:
     try:
-        engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+        connect_args = {"connect_timeout": 5}
+        if "postgresql" in DATABASE_URL.lower():
+            connect_args["sslmode"] = "require"
+
+        # Use NullPool for serverless Vercel environments to prevent connection slot exhaustion
+        engine = create_engine(
+            DATABASE_URL,
+            poolclass=NullPool,
+            connect_args=connect_args,
+            pool_pre_ping=True
+        )
         SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         # Safely create tables if they do not exist
         Base.metadata.create_all(bind=engine)
-        print("[Local-First DB] SQLAlchemy connection handler initialized successfully.")
+        print("[Local-First DB] SQLAlchemy connection handler initialized successfully with NullPool & SSL.")
     except Exception as e:
         print(f"[Local-First DB] Warning: Failed to initialize database engine for {DATABASE_URL}: {e}")
 
@@ -84,7 +96,16 @@ def check_db_connection() -> bool:
         print("[DB-Health] Database connection skipped: DATABASE_URL not set in environment.")
         return False
     try:
-        ping_engine = create_engine(db_url, pool_pre_ping=True)
+        connect_args = {"connect_timeout": 5}
+        if "postgresql" in db_url.lower():
+            connect_args["sslmode"] = "require"
+
+        ping_engine = create_engine(
+            db_url,
+            poolclass=NullPool,
+            connect_args=connect_args,
+            pool_pre_ping=True
+        )
         with ping_engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         print("[DB-Health] Database connection established successfully to Supabase PostgreSQL!")
