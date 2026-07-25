@@ -1237,6 +1237,7 @@ if (window.innerWidth <= 768) {
 
 // Initialize Supabase Client if env variables are available
 let supabaseClient = null;
+let promptsChannel = null; // Active global reference for the prompts Realtime channel
 const supabaseUrl = window.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = window.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -1379,8 +1380,20 @@ async function loadAllPromptsFromSupabase() {
 function setupPromptsRealtimeSubscription() {
     if (!supabaseClient) return;
     try {
-        const channel = supabaseClient
-            .channel('schema-db-changes')
+        // Clean up previous channel subscription to prevent duplicate callback additions
+        if (promptsChannel) {
+            try {
+                supabaseClient.removeChannel(promptsChannel);
+                console.log("Cleaned up existing Supabase Realtime channel.");
+            } catch (cleanupErr) {
+                console.warn("Failed to remove previous Realtime channel gracefully:", cleanupErr);
+            }
+            promptsChannel = null;
+        }
+
+        promptsChannel = supabaseClient.channel('schema-db-changes');
+
+        promptsChannel
             .on(
                 'postgres_changes',
                 {
@@ -1419,6 +1432,8 @@ function setupPromptsRealtimeSubscription() {
                 }
             )
             .subscribe();
+
+        console.log("Successfully subscribed to Supabase Realtime prompts table.");
     } catch (err) {
         console.error("Failed to enable Supabase Realtime subscription:", err);
     }
