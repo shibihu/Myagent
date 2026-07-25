@@ -322,9 +322,15 @@ async def github_callback(code: str):
         raise HTTPException(status_code=500, detail=f"Authentication flow encountered fatal error: {str(e)}")
 
 @app.get("/auth/me")
-async def get_me(user = Depends(get_current_user)):
-    """Protected route to fetch authenticated user profile details."""
-    return user
+async def get_me(request: Request):
+    """Protected route to fetch authenticated user profile details, returning 200 OK with authenticated: false if unauthenticated."""
+    try:
+        user = await get_current_user(request)
+        if user:
+            return user
+    except HTTPException:
+        pass
+    return {"authenticated": False, "message": "No active session"}
 
 @app.get("/auth/logout")
 async def logout_user():

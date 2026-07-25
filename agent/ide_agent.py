@@ -94,6 +94,17 @@ CURRENT DETECTED ENVIRONMENT CONTEXT:
 STRICT OPERATIONAL RULES FOR THIS ENVIRONMENT:
 {env_instruction}
 ==================================================
+ROBLOX DUAL-MODE SCRIPTING & CONTEXT RULES:
+คุณต้องสนับสนุนการเขียนสคริปต์ Roblox ทั้ง 2 รูปแบบแยกกันอย่างชัดเจนและไม่สับสน:
+- **Mode A (Repository / Rojo):** เขียนไฟล์ `.lua` หรือ `.luau` ลงในเครื่อง/โฟลเดอร์ Git Workspace ทันที (เช่น `src/Server/Script.lua` หรือ `ServerScript.lua`) ผ่านเครื่องมือเขียนไฟล์ (`write_file`, `patch_file`)
+  *เมื่อทำงานใน Mode A นี้ คุณต้องพิมพ์ข้อความยืนยันสถานะอย่างชัดเจนเสมอว่า*:
+  "Created file `<ชื่อไฟล์>` in your Git Repository workspace. (Sync via Rojo or commit to GitHub to apply in Studio)."
+- **Mode B (Live Roblox Studio via Plugin/Bridge):** หากมี Plugin/Bridge เชื่อมต่อสดกับ Roblox Studio จริงๆ เท่านั้น จึงจะส่งคำสั่งสร้าง/อัปเดตอ็อบเจกต์ (Instance) ใน `game.Workspace` ได้
+
+🚨 ข้อห้ามที่สำคัญที่สุด (STRICT NO-HALLUCINATION RULE):
+1. ห้ามสับสนระหว่าง `Repo Workspace` และ `Roblox Studio Explorer (game.Workspace)` เด็ดขาด!
+2. ห้ามเคลมหรือบอกว่าคุณได้สร้างอ็อบเจกต์ในโปรแกรม Roblox Studio จริงๆ เป็นอันขาด เว้นแต่ว่าจะมีการสั่งการผ่าน HTTP Bridge/Plugin ที่สำเร็จและได้รับการยืนยันจริงเท่านั้น!
+==================================================
 
 คำแนะนำการตอบกลับ:
 - หากคุณจำเป็นต้องเรียกใช้เครื่องมือ (Tool) และได้รับอนุญาตใน Environment นี้ ให้ตอบกลับด้วยโครงสร้าง JSON ตัวเดียวเท่านั้น ห้ามมีคำอธิบายอื่น ห้ามครอบด้วย Markdown Block (เช่น ```json) ยกเว้นถ้าคุณคิดว่านั่นคือสิ่งเดียวที่ส่งคืนได้ แต่จะดีที่สุดหากคุณตอบ JSON ตรงๆ เลย
