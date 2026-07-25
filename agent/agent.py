@@ -13,6 +13,18 @@ from agent.tools import (
     git_checkout_tool, git_pull_tool
 )
 
+def filter_thought_process(text: str) -> str:
+    if not text or not isinstance(text, str):
+        return text
+    import re
+    # Strip <thought>...</thought> tags and everything inside them
+    text = re.sub(r"<thought>.*?</thought>", "", text, flags=re.DOTALL)
+    # Strip <reasoning>...</reasoning> tags
+    text = re.sub(r"<reasoning>.*?</reasoning>", "", text, flags=re.DOTALL)
+    # Strip markdown code blocks of thought if any
+    text = re.sub(r"```thought\s*.*?\s*```", "", text, flags=re.DOTALL)
+    return text.strip()
+
 class ChatAgent:
     def __init__(self):
         # รวบรวม API Keys จากค่ายต่างๆ (หยิบจาก Environment ปลอดภัยไร้คีย์ดิบ)
@@ -22,6 +34,12 @@ class ChatAgent:
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
 
     async def get_response(self, prompt: str, history: list = None, status_callback=None, is_roblox: bool = False) -> dict:
+        res = await self._get_response_core(prompt, history, status_callback, is_roblox)
+        if res and isinstance(res, dict) and "reply" in res:
+            res["reply"] = filter_thought_process(res["reply"])
+        return res
+
+    async def _get_response_core(self, prompt: str, history: list = None, status_callback=None, is_roblox: bool = False) -> dict:
         """ระบบสลับสมองข้ามค่ายอัตโนมัติพร้อมระบบ Tool Calling (Function Calling) และ Sliding Window History"""
         
         async def trigger_status(msg: str):

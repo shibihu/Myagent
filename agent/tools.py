@@ -148,6 +148,21 @@ def view_dir_tool(path: str = ".") -> dict:
 def execute_command_tool(command: str) -> dict:
     """Executes a command inside the workspace directory, with truncated stdout/stderr output."""
     ws = ensure_workspace()
+
+    # Intercept and replace CLI git operations with serverless GitHub REST API fallback
+    if "git push" in command or "git commit" in command or (shutil.which("git") is None and "git " in command):
+        # Extract commit message if available
+        commit_message = "Update from MyAgent"
+        match = re.search(r'-m\s+["\']([^"\']+)["\']', command)
+        if match:
+            commit_message = match.group(1)
+        else:
+            match = re.search(r'--message=["\']([^"\']+)["\']', command)
+            if match:
+                commit_message = match.group(1)
+
+        return sync_workspace_to_github_rest(commit_message)
+
     try:
         process = subprocess.run(
             command,
@@ -173,6 +188,73 @@ def execute_command_tool(command: str) -> dict:
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+def sync_workspace_to_github_rest(commit_message: str = "Update from MyAgent") -> dict:
+    """Syncs local workspace files to GitHub repository using REST API as a Vercel-compatible fallback."""
+    try:
+        import json
+        import base64
+        import httpx
+
+        config_path = os.path.join(WORKSPACE_DIR, ".github_config.json")
+        if not os.path.exists(config_path):
+            return {"status": "error", "message": "No GitHub repository config found. Please clone the repository first."}
+
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+
+        owner = config.get("owner")
+        repo = config.get("repo")
+        token = config.get("token")
+
+        if not owner or not repo or not token:
+            return {"status": "error", "message": "Invalid GitHub repository credentials stored."}
+
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"token {token}"
+        }
+
+        synced_files = []
+        for root, dirs, files in os.walk(WORKSPACE_DIR):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for file in files:
+                if file == ".github_config.json":
+                    continue
+                filepath = os.path.join(root, file)
+                relative_path = os.path.relpath(filepath, WORKSPACE_DIR)
+
+                with open(filepath, "rb") as f:
+                    local_bytes = f.read()
+
+                local_base64 = base64.b64encode(local_bytes).decode("utf-8")
+                get_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{relative_path}"
+                sha = None
+
+                with httpx.Client(follow_redirects=True) as client:
+                    resp = client.get(get_url, headers=headers)
+                    if resp.status_code == 200:
+                        sha = resp.json().get("sha")
+
+                put_data = {
+                    "message": commit_message,
+                    "content": local_base64
+                }
+                if sha:
+                    put_data["sha"] = sha
+
+                with httpx.Client(follow_redirects=True) as client:
+                    put_resp = client.put(get_url, headers=headers, json=put_data)
+                    if put_resp.status_code in [200, 201]:
+                        synced_files.append(relative_path)
+
+        return {
+            "status": "success",
+            "message": f"Successfully pushed and synced local workspace changes directly to GitHub repository using REST API.",
+            "synced_files": synced_files
+        }
+    except Exception as e:
+        return {"status": "error", "message": f"Serverless GitHub sync failed: {str(e)}"}
 
 def write_file_tool(filepath: str, content: str) -> dict:
     """Writes or overwrites a file inside the workspace entirely with the given content."""

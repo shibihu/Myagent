@@ -781,6 +781,17 @@ async def api_github_clone(req: GitHubCloneRequest):
                             with open(target_path, "wb") as f:
                                 f.write(z.read(member))
 
+        # Save GitHub Configuration for REST Git tools fallback
+        import json
+        config_data = {
+            "owner": owner,
+            "repo": repo,
+            "token": req.token
+        }
+        config_path = os.path.join(WORKSPACE_DIR, ".github_config.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=2)
+
         return {
             "status": "success",
             "message": f"Successfully cloned and extracted {owner}/{repo} into serverless workspace directory."
