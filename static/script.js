@@ -1558,6 +1558,13 @@ async function initAuthSession() {
                 const contentType = response.headers.get("content-type") || "";
                 if (contentType.includes("application/json")) {
                     const userData = await response.json();
+                    if (userData && userData.authenticated === false) {
+                        console.log("No active user session (unauthenticated guest).");
+                        authLoading.classList.add("hidden");
+                        authUser.classList.add("hidden");
+                        authGuest.classList.remove("hidden");
+                        return;
+                    }
                     if (userData && (userData.github_id || userData.username)) {
                         // User is authenticated successfully
                         if (userAvatar) {
