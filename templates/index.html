@@ -212,7 +212,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
         // Inject NEXT_PUBLIC_API_URL from backend env variable for cross-origin API calls on frontend
-        window.BACKEND_API_URL = "{{ NEXT_PUBLIC_API_URL }}";
+        window.BACKEND_API_URL = ""; // Keep empty to prevent FastAPI requests from calling the Supabase Edge Function directly
         window.NEXT_PUBLIC_API_URL = "{{ NEXT_PUBLIC_API_URL }}";
         window.NEXT_PUBLIC_SUPABASE_URL = "{{ NEXT_PUBLIC_SUPABASE_URL }}";
         window.NEXT_PUBLIC_SUPABASE_ANON_KEY = "{{ NEXT_PUBLIC_SUPABASE_ANON_KEY }}";
