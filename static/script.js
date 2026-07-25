@@ -1339,6 +1339,13 @@ async function renderStaticMessageWithMetadata(authorName, authorAvatar, promptT
 async function loadAllPromptsFromSupabase() {
     if (!supabaseClient) return;
     try {
+        // If we already have active conversational chat messages loaded from localStorage,
+        // let the active conversation take precedence to prevent overwriting
+        if (currentChatMessages && currentChatMessages.length > 0) {
+            console.log("Active chatbot conversation is loaded. Skipping prompts list overwrite.");
+            return;
+        }
+
         const { data, error } = await supabaseClient
             .from('prompts')
             .select('id, content, created_at, user_id, users (username, avatar_url)')
