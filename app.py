@@ -700,18 +700,77 @@ async def save_mcp_config_endpoint(req: MCPConfigRequest):
 
 @app.post("/api/github/clone")
 async def api_github_clone(req: GitHubCloneRequest):
-    """Clones a selected repository into the workspace, supporting authenticated private repositories if token is provided."""
+    """Clones a selected repository into the workspace using GitHub REST API zipball to support serverless environments."""
     try:
-        from agent.tools import clone_repository_tool
+        import httpx
+        import zipfile
+        import io
+        import shutil
+        from agent.tools import WORKSPACE_DIR, ensure_workspace
+
         repo_url = req.repo_url
 
-        if req.token:
-            # Inject token into URL for authenticated cloning: https://<token>@github.com/...
-            match = re.match(r"https://(github\.com/.*)", repo_url)
-            if match:
-                repo_url = f"https://{req.token}@{match.group(1)}"
+        # Parse owner and repo name from GitHub URL
+        match = re.search(r"github\.com/([^/]+)/([^/.]+)", repo_url)
+        if not match:
+            raise HTTPException(status_code=400, detail="Invalid GitHub repository URL format")
 
-        res = clone_repository_tool(repo_url)
-        return res
+        owner = match.group(1)
+        repo = match.group(2)
+
+        # Prepare auth headers if GitHub Personal Access Token is provided
+        headers = {
+            "Accept": "application/vnd.github+json"
+        }
+        if req.token:
+            headers["Authorization"] = f"token {req.token}"
+
+        # Fetch repository zipball from GitHub API (redirects to default branch)
+        zipball_url = f"https://api.github.com/repos/{owner}/{repo}/zipball"
+
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            resp = await client.get(zipball_url, headers=headers)
+            if resp.status_code != 200:
+                raise Exception(f"Failed to fetch zipball from GitHub: HTTP {resp.status_code} - {resp.text}")
+
+            # Atomic extraction into WORKSPACE_DIR
+            ensure_workspace()
+            if os.path.exists(WORKSPACE_DIR):
+                try:
+                    shutil.rmtree(WORKSPACE_DIR)
+                except Exception:
+                    pass
+            os.makedirs(WORKSPACE_DIR, exist_ok=True)
+
+            zip_bytes = resp.content
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+                members = z.namelist()
+                if members:
+                    # Strip the dynamic top-level github folder (e.g. 'owner-repo-sha/')
+                    top_dir = members[0].split('/')[0]
+                    for member in members:
+                        if member == f"{top_dir}/":
+                            continue
+
+                        relative_path = member[len(top_dir)+1:]
+                        if not relative_path:
+                            continue
+
+                        target_path = os.path.join(WORKSPACE_DIR, relative_path)
+
+                        if member.endswith('/'):
+                            os.makedirs(target_path, exist_ok=True)
+                        else:
+                            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                            with open(target_path, "wb") as f:
+                                f.write(z.read(member))
+
+        return {
+            "status": "success",
+            "message": f"Successfully cloned and extracted {owner}/{repo} into serverless workspace directory."
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "status": "error",
+            "message": f"Serverless clone failed: {str(e)}"
+        }

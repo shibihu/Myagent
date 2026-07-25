@@ -1271,10 +1271,16 @@ async function signInWithGitHub() {
         return;
     }
     try {
+        // Build dynamic origin with a trailing slash to satisfy Supabase Redirect Wildcard matches
+        const redirectUrl = window.location.origin.endsWith('/') ? window.location.origin : (window.location.origin + '/');
+
         const { data, error } = await supabaseClient.auth.signInWithOAuth({
             provider: 'github',
             options: {
-                redirectTo: window.location.origin
+                redirectTo: redirectUrl,
+                queryParams: {
+                    prompt: 'consent'
+                }
             }
         });
         if (error) throw error;
@@ -1541,28 +1547,38 @@ async function initAuthSession() {
 
         try {
             const response = await fetch(`${API_BASE || ""}/auth/me`);
+            if (response.status === 401) {
+                console.log("No active user session (unauthenticated guest).");
+                authLoading.classList.add("hidden");
+                authUser.classList.add("hidden");
+                authGuest.classList.remove("hidden");
+                return;
+            }
             if (response.ok) {
-                const userData = await response.json();
-                if (userData && (userData.github_id || userData.username)) {
-                    // User is authenticated successfully
-                    if (userAvatar) {
-                        userAvatar.src = userData.avatar_url || "https://github.com/identicons/guest.png";
-                    }
-                    if (userUsername) {
-                        userUsername.textContent = userData.name || userData.username || "GitHub User";
-                    }
-                    if (userEmail) {
-                        userEmail.textContent = userData.email || `@${userData.username || "user"}`;
-                    }
+                const contentType = response.headers.get("content-type") || "";
+                if (contentType.includes("application/json")) {
+                    const userData = await response.json();
+                    if (userData && (userData.github_id || userData.username)) {
+                        // User is authenticated successfully
+                        if (userAvatar) {
+                            userAvatar.src = userData.avatar_url || "https://github.com/identicons/guest.png";
+                        }
+                        if (userUsername) {
+                            userUsername.textContent = userData.name || userData.username || "GitHub User";
+                        }
+                        if (userEmail) {
+                            userEmail.textContent = userData.email || `@${userData.username || "user"}`;
+                        }
 
-                    authLoading.classList.add("hidden");
-                    authGuest.classList.add("hidden");
-                    authUser.classList.remove("hidden");
-                    return;
+                        authLoading.classList.add("hidden");
+                        authGuest.classList.add("hidden");
+                        authUser.classList.remove("hidden");
+                        return;
+                    }
                 }
             }
         } catch (err) {
-            console.error("Error verifying active GitHub login session:", err);
+            console.log("Silent fallback on guest verification:", err);
         }
     }
 

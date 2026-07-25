@@ -6,6 +6,10 @@ import re
 # Workspace directory configuration
 WORKSPACE_DIR = os.environ.get("WORKSPACE_DIR", os.path.abspath(os.path.join(os.getcwd(), "workspace")))
 
+# Serverless Vercel write-allowed environment adjustment
+if os.environ.get("VERCEL"):
+    WORKSPACE_DIR = "/tmp/workspace"
+
 def ensure_workspace():
     """Ensure the workspace directory exists."""
     if not os.path.exists(WORKSPACE_DIR):
