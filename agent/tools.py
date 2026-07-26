@@ -258,6 +258,56 @@ def sync_workspace_to_github_rest(commit_message: str = "Update from MyAgent") -
 
 def write_file_tool(filepath: str, content: str) -> dict:
     """Writes or overwrites a file inside the workspace entirely with the given content."""
+    # Check if we should dispatch directly to active Roblox Studio Session via Ngrok-MCP
+    studio_mcp_url = os.environ.get("STUDIO_MCP_URL")
+    if studio_mcp_url and (filepath.endswith(".lua") or filepath.endswith(".luau")):
+        try:
+            import httpx
+            # Determine script details
+            filename = os.path.basename(filepath)
+            script_name = os.path.splitext(filename)[0]
+
+            script_type = "Script"
+            parent = "ServerScriptService"
+
+            path_lower = filepath.lower()
+            if "starterplayer" in path_lower or "local" in path_lower:
+                script_type = "LocalScript"
+                parent = "StarterPlayerScripts"
+            elif "replicatedstorage" in path_lower or "module" in path_lower:
+                script_type = "ModuleScript"
+                parent = "ReplicatedStorage"
+
+            payload = {
+                "action": "create_or_update_script",
+                "script_type": script_type,
+                "parent": parent,
+                "name": script_name,
+                "content": content
+            }
+
+            headers = {
+                "Content-Type": "application/json",
+                "ngrok-skip-browser-warning": "true"
+            }
+
+            # Post directly to the Roblox Studio MCP Plugin via Ngrok
+            with httpx.Client(follow_redirects=True, timeout=10) as client:
+                resp = client.post(studio_mcp_url, json=payload, headers=headers)
+                if resp.status_code in [200, 201]:
+                    return {
+                        "status": "success",
+                        "message": f"Successfully created/modified script '{script_name}' in Roblox Studio ({parent}) via Ngrok-MCP.",
+                        "studio_response": resp.json() if "application/json" in resp.headers.get("content-type", "") else resp.text
+                    }
+                else:
+                    raise Exception(f"Roblox Studio MCP returned status {resp.status_code}: {resp.text}")
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"Failed to dispatch script to Roblox Studio via Ngrok-MCP: {str(e)}. Fallback to local files."
+            }
+
     try:
         target_path = clean_path(filepath)
     except ValueError as ve:
