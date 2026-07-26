@@ -232,12 +232,51 @@ class LocalFirstDatabaseHelper:
 
     async def get_all_chats(self) -> List[dict]:
         """Returns metadata list of all active chat sessions."""
+        if SessionLocal:
+            try:
+                db = SessionLocal()
+                try:
+                    # Query chats sessions chronologically
+                    rows = db.execute(text("SELECT id, title FROM chats ORDER BY created_at DESC")).fetchall()
+                    return [{"id": str(r[0]), "title": str(r[1])} for r in rows]
+                finally:
+                    db.close()
+            except Exception as e:
+                print(f"[Local-First DB] Warning: Failed to query chats list from SQL: {e}")
+
         async with _file_lock:
             # Sort sessions chronologically if they have messages
             return [{"id": cid, "title": info["title"]} for cid, info in self.chats.items()]
 
     async def get_chat_history(self, chat_id: str) -> dict:
-        """Fetch full chat title and message list for a specific session."""
+        """Fetch full chat title and message list for a specific session from SQL or local cache."""
+        if SessionLocal:
+            try:
+                db = SessionLocal()
+                try:
+                    chat_row = db.execute(text("SELECT title FROM chats WHERE id = :cid"), {"cid": chat_id}).first()
+                    title = chat_row[0] if chat_row else "New Chat"
+
+                    # Fetch individual messages filtered strictly by chat_id
+                    msg_rows = db.execute(
+                        text("SELECT role, content FROM chat_messages WHERE chat_id = :cid ORDER BY created_at ASC"),
+                        {"cid": chat_id}
+                    ).fetchall()
+
+                    messages = []
+                    for r, c in msg_rows:
+                        messages.append({
+                            "role": str(r),
+                            "content": str(c),
+                            "model": None,
+                            "total_tokens": 0
+                        })
+                    return {"title": title, "messages": messages}
+                finally:
+                    db.close()
+            except Exception as e:
+                print(f"[Local-First DB] Warning: Failed to query chat messages from SQL: {e}")
+
         async with _file_lock:
             if chat_id in self.chats:
                 return self.chats[chat_id]
@@ -245,12 +284,50 @@ class LocalFirstDatabaseHelper:
 
     async def save_chat_history(self, chat_id: str, title: str, messages: List[dict]) -> None:
         """Stores the updated list of messages for a session and persists atomically."""
+        if SessionLocal:
+            try:
+                db = SessionLocal()
+                try:
+                    # 1. Save or Update chat metadata
+                    chat_exists = db.execute(text("SELECT 1 FROM chats WHERE id = :cid"), {"cid": chat_id}).first()
+                    if chat_exists:
+                        db.execute(text("UPDATE chats SET title = :title WHERE id = :cid"), {"title": title, "cid": chat_id})
+                    else:
+                        db.execute(text("INSERT INTO chats (id, title) VALUES (:cid, :title)"), {"cid": chat_id, "title": title})
+
+                    # 2. Re-create messages in chat_messages table to ensure consistent order without duplicates
+                    db.execute(text("DELETE FROM chat_messages WHERE chat_id = :cid"), {"cid": chat_id})
+
+                    for idx, msg in enumerate(messages):
+                        msg_id = f"{chat_id}_{idx}"
+                        db.execute(
+                            text("INSERT INTO chat_messages (id, chat_id, role, content) VALUES (:mid, :cid, :role, :content)"),
+                            {"mid": msg_id, "cid": chat_id, "role": msg.get("role"), "content": msg.get("content")}
+                        )
+                    db.commit()
+                finally:
+                    db.close()
+            except Exception as e:
+                print(f"[Local-First DB] Warning: Failed to save chat messages to SQL: {e}")
+
         async with _file_lock:
             self.chats[chat_id] = {"title": title, "messages": messages}
             _save_json_file(CHATS_FILE, self.chats)
 
     async def delete_chat_session(self, chat_id: str) -> bool:
         """Deletes a chat session from memory and updates persistence."""
+        if SessionLocal:
+            try:
+                db = SessionLocal()
+                try:
+                    db.execute(text("DELETE FROM chats WHERE id = :cid"), {"cid": chat_id})
+                    db.execute(text("DELETE FROM chat_messages WHERE chat_id = :cid"), {"cid": chat_id})
+                    db.commit()
+                finally:
+                    db.close()
+            except Exception as e:
+                print(f"[Local-First DB] Warning: Failed to delete chat from SQL: {e}")
+
         async with _file_lock:
             if chat_id in self.chats:
                 del self.chats[chat_id]
@@ -260,6 +337,17 @@ class LocalFirstDatabaseHelper:
 
     async def rename_chat_session(self, chat_id: str, title: str) -> bool:
         """Renames a chat session title."""
+        if SessionLocal:
+            try:
+                db = SessionLocal()
+                try:
+                    db.execute(text("UPDATE chats SET title = :title WHERE id = :cid"), {"title": title, "cid": chat_id})
+                    db.commit()
+                finally:
+                    db.close()
+            except Exception as e:
+                print(f"[Local-First DB] Warning: Failed to rename chat in SQL: {e}")
+
         async with _file_lock:
             if chat_id in self.chats:
                 self.chats[chat_id]["title"] = title

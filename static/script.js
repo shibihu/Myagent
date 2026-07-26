@@ -503,14 +503,15 @@ async function simulateStreamingMessage(textBodyElement, fullText, model = null,
 
 function createMessageLayout(role) {
     const rowDiv = document.createElement("div");
-    rowDiv.className = `message-row ${role === "user" ? "user-row" : "ai-row"}`;
+    const isUser = (role === "user" || role === "system");
+    rowDiv.className = `message-row ${isUser ? "user-row" : "ai-row"}`;
     const contentDiv = document.createElement("div");
     contentDiv.className = "message-content";
     const avatarDiv = document.createElement("div");
     avatarDiv.className = "avatar";
-    avatarDiv.textContent = role === "user" ? "U" : "A";
+    avatarDiv.textContent = isUser ? "U" : "A";
     const textBody = document.createElement("div");
-    textBody.className = role === "user" ? "text-body" : "text-body markdown-body";
+    textBody.className = isUser ? "text-body" : "text-body markdown-body";
     
     contentDiv.appendChild(avatarDiv);
     contentDiv.appendChild(textBody);
@@ -580,7 +581,8 @@ function setupMessageUtilities(textBody) {
 
 async function renderStaticMessage(role, content, model = null, tokens = 0) {
     const textBody = createMessageLayout(role);
-    if (role === "user") {
+    const isUser = (role === "user" || role === "system");
+    if (isUser) {
         textBody.textContent = content;
     } else {
         textBody.innerHTML = marked.parse(content);
