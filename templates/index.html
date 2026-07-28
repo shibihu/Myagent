@@ -3,220 +3,1147 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ChatGPT - MyAgent AI</title>
+    <title>MyAgent AI Code Editor</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        darkBg: '#131313',
+                        panelBg: '#18181c',
+                        surfaceBg: '#1e1e1e',
+                        borderCol: '#2a2a35',
+                        brandBlue: '#007acc',
+                        textMuted: '#858593',
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome for gorgeous icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <!-- Github Markdown CSS -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-dark.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css">
+    <!-- Marked JS for Markdown parsing -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+    <!-- React and ReactDOM CDNs -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Babel Standalone for JSX support in single-file SPA -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.3/babel.min.js"></script>
+    <!-- Monaco Editor Loader -->
+    <script src="https://cdn.jsdelivr.net/npm/@monaco-editor/loader@1.4.0/lib/umd/monaco-loader.min.js"></script>
+    <!-- Supabase JS Client -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <link rel="manifest" href="/manifest.json">
-    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        body {
+            background-color: #131313;
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #131313;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #2a2a35;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #3e3e4a;
+        }
+        /* Monaco specific container layout */
+        .monaco-container-outer {
+            flex: 1;
+            min-height: 0;
+            width: 100%;
+            height: 100%;
+        }
+        /* Spin animation */
+        @keyframes spin-wheel {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .animate-spin-custom {
+            animation: spin-wheel 1s linear infinite;
+        }
+        /* Custom toast notifier styling */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toast {
+            background-color: #1e1e1e;
+            border-left: 4px solid #007acc;
+            color: #ffffff;
+            padding: 12px 18px;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 250px;
+            animation: slideIn 0.25s ease-out;
+        }
+        .toast-error {
+            border-left-color: #ef4444;
+        }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+    </style>
 </head>
-<body>
-
-    <!-- Sidebar แถบประวัติซ้ายมือ -->
-    <div id="sidebar">
-        <div class="sidebar-header">
-            <button id="new-chat-btn" class="pop-btn">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                New chat
-            </button>
-            <button id="toggle-sidebar-btn" class="icon-btn pop-btn" title="Close sidebar">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
-            </button>
-        </div>
-        <ul id="history-list"></ul>
-
-        <!-- Sidebar Footer for Authentication -->
-        <div id="sidebar-footer">
-            <!-- Loading State -->
-            <div id="auth-loading" class="auth-loading-state">
-                <div class="spinner"></div>
-            </div>
-
-            <!-- Guest / Logged Out State -->
-            <div id="auth-guest" class="auth-guest-state hidden">
-                <a href="/auth/github/login" id="github-signin-btn" class="pop-btn auth-btn">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="auth-icon"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
-                    Sign in with GitHub
-                </a>
-            </div>
-
-            <!-- Authenticated State -->
-            <div id="auth-user" class="auth-user-state hidden">
-                <div class="user-info-row">
-                    <img id="user-avatar" src="" alt="User Avatar" class="user-avatar">
-                    <div class="user-details">
-                        <span id="user-username" class="user-name-text">Loading...</span>
-                        <span id="user-email" class="user-email-text"></span>
-                    </div>
-                </div>
-                <a href="/auth/logout" id="logout-btn" class="pop-btn auth-btn logout-btn">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="auth-icon"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-                    Log out
-                </a>
+<body class="overflow-hidden select-none">
+    <div id="root">
+        <!-- React App mounts here -->
+        <div class="flex items-center justify-center h-screen bg-darkBg text-textMuted">
+            <div class="text-center space-y-4">
+                <div class="animate-spin-custom rounded-full h-12 w-12 border-4 border-t-brandBlue border-borderCol mx-auto"></div>
+                <div class="text-sm font-medium">Loading MyAgent AI Code Editor environment...</div>
             </div>
         </div>
     </div>
 
-    <!-- พื้นที่แสดงแชทหลัก -->
-    <div id="main-container">
-        <div class="top-bar">
-            <div class="top-bar-left">
-                <button id="open-sidebar-btn" class="icon-btn pop-btn hidden" title="Open sidebar">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
-                </button>
-                <div id="chat-title">ChatGPT 4o</div>
-                <span id="chat-message-count-badge" style="font-size: 11px; padding: 3px 8px; background-color: rgba(255,255,255,0.06); border-radius: 12px; color: var(--text-muted); font-weight: 500;">0 msgs</span>
-            </div>
-            <button id="toggle-memory-btn" class="pop-btn" title="Memory Context">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; display: inline-block; vertical-align: text-bottom; margin-right: 6px;">
-                    <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
-                    <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
-                    <path d="M12 5v13"/>
-                </svg>Memory Context
-            </button>
-            <button id="toggle-mcp-btn" class="pop-btn" title="MCP Settings" style="margin-left: 8px;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; display: inline-block; vertical-align: text-bottom; margin-right: 6px;">
-                    <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
-                    <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
-                    <line x1="6" y1="6" x2="6.01" y2="6"></line>
-                    <line x1="6" y1="18" x2="6.01" y2="18"></line>
-                </svg>MCP Settings
-            </button>
-        </div>
-        
-        <div id="chat-box-wrapper">
-            <div id="chat-box"></div>
-            <div id="typing-indicator" class="typing-indicator hidden">
-                <div class="dot"></div><div class="dot"></div><div class="dot"></div>
-            </div>
-        </div>
-
-        <!-- กล่องอินพุตพร้อมปุ่มเปิด/ปิดระบบค้นหาเว็บสดๆ -->
-        <div class="input-container">
-            <!-- File Preview Attachment Bar (เหนือนกล่องข้อความอินพุตพอดี) -->
-            <div id="file-preview-bar" class="file-preview-bar hidden"></div>
-
-            <div class="input-wrapper">
-                <!-- Attachment Button สไตล์ ChatGPT -->
-                <button id="attachment-btn" class="pop-btn" title="Attach files" type="button">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
-                    </svg>
-                </button>
-                <input type="file" id="file-input" multiple accept=".jpg,.jpeg,.png,.txt,.pdf" style="display:none;">
-                <input type="file" id="ide-file-upload-input" style="display:none;">
-
-                <!-- Floating Pop-up Menu -->
-                <div id="attachment-menu" class="attachment-popup-menu hidden">
-                    <button id="menu-upload-file-btn" class="menu-item pop-btn" type="button">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;margin-right:8px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                        Upload File
-                    </button>
-                    <button id="menu-github-import-btn" class="menu-item pop-btn" type="button">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;margin-right:8px;"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
-                        Import from GitHub
-                    </button>
-                </div>
-
-                <button id="search-web-toggle" class="pop-btn" title="Toggle Web Search">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-                    <span>Search</span>
-                </button>
-                <input type="text" id="message-input" placeholder="Message MyAgent..." autocomplete="off">
-                <button id="send-button" class="pop-btn" title="Send message">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
-                </button>
-            </div>
-            <div class="footer-note">MyAgent can make mistakes. Verify important info.</div>
-        </div>
-    </div>
-
-    <div id="memory-drawer" class="closed">
-        <div class="memory-header">
-            <span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px; display: inline-block; vertical-align: text-bottom; margin-right: 6px;">
-                    <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
-                    <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
-                    <path d="M12 5v13"/>
-                </svg>Long-term Memory
-            </span>
-            <button id="close-memory-btn" class="pop-btn">✕</button>
-        </div>
-        <ul id="memory-list"></ul>
-    </div>
-
-    <!-- Gorgeous custom GUI Modal Overlay replacement for native prompt/confirm -->
-    <div id="custom-modal" class="modal-overlay hidden">
-        <div class="modal-container pop-btn">
-            <div class="modal-header">
-                <span id="modal-title">MyAgent AI</span>
-                <button id="modal-close-btn" class="pop-btn">✕</button>
-            </div>
-            <div class="modal-body">
-                <p id="modal-message"></p>
-                <input type="text" id="modal-input" class="hidden" autocomplete="off">
-            </div>
-            <div class="modal-footer">
-                <button id="modal-cancel-btn" class="pop-btn secondary-btn">Cancel</button>
-                <button id="modal-ok-btn" class="pop-btn primary-btn">OK</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Gorgeous GitHub Import Modal -->
-    <div id="github-modal" class="modal-overlay hidden">
-        <div class="modal-container pop-btn" style="max-width: 500px;">
-            <div class="modal-header">
-                <span>🐙 GitHub Repository Import</span>
-                <button id="github-close-btn" class="pop-btn" style="background:transparent;border:none;color:var(--text-muted);font-size:18px;cursor:pointer;">✕</button>
-            </div>
-            <div class="modal-body" style="padding: 20px;">
-                <div id="github-token-section">
-                    <label style="font-size: 13px; font-weight: 600; color: var(--text-muted);">GitHub Personal Access Token (PAT)</label>
-                    <input type="password" id="github-token-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off" style="width: 100%; padding: 10px 14px; background-color: #1e1f29; border: 1.5px solid #4a4b56; border-radius: 8px; color: #ffffff; font-size: 14.5px; margin-top: 6px; margin-bottom: 12px;">
-                    <button id="github-connect-btn" class="pop-btn primary-btn" style="width: 100%; padding: 10px 14px; border-radius: 8px; font-weight: 600;">Connect GitHub Account</button>
-                </div>
-
-                <div id="github-repos-section" class="hidden" style="margin-top: 10px;">
-                    <label style="font-size: 13px; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 6px;">Select Repository to Import</label>
-                    <select id="github-repo-select" class="modal-select"></select>
-
-                    <button id="github-import-submit-btn" class="pop-btn primary-btn" style="width: 100%; padding: 11px 14px; border-radius: 8px; font-weight: 600; margin-top: 16px;">Clone Repo into Workspace</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Gorgeous MCP Settings Modal -->
-    <div id="mcp-modal" class="modal-overlay hidden">
-        <div class="modal-container pop-btn" style="max-width: 550px; width: 95%;">
-            <div class="modal-header">
-                <span>🔌 Model Context Protocol (MCP) Configuration</span>
-                <button id="mcp-close-btn" class="pop-btn" style="background:transparent;border:none;color:var(--text-muted);font-size:18px;cursor:pointer;">✕</button>
-            </div>
-            <div class="modal-body" style="padding: 20px;">
-                <p style="font-size:13px;color:var(--text-muted);line-height:1.4;margin-bottom:12px;">
-                    วางโครงสร้าง JSON Config เพื่อเชื่อมต่อเซิร์ฟเวอร์ MCP ภายนอก (เช่น Roblox Studio, Claude Desktop Servers ฯลฯ) บอตจะได้รับเครื่องมือจาก MCP Servers เหล่านี้อัตโนมัติ
-                </p>
-                <textarea id="mcp-config-textarea" placeholder='{ "mcpServers": {} }' style="width:100%; height:250px; background-color:#1e1f29; border:1.5px solid #4a4b56; border-radius:8px; color:#a5b4fc; font-family:'Fira Code', 'Courier New', monospace; font-size:13px; padding:12px; outline:none; resize:none; line-height:1.5;"></textarea>
-            </div>
-            <div class="modal-footer">
-                <button id="mcp-cancel-btn" class="pop-btn secondary-btn">Cancel</button>
-                <button id="mcp-save-btn" class="pop-btn primary-btn">Save Config</button>
-            </div>
-        </div>
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
-        // Inject NEXT_PUBLIC_API_URL from backend env variable for cross-origin API calls on frontend
-        window.BACKEND_API_URL = ""; // Keep empty to prevent FastAPI requests from calling the Supabase Edge Function directly
+        // Inject server variables
+        window.BACKEND_API_URL = "";
         window.NEXT_PUBLIC_API_URL = "{{ NEXT_PUBLIC_API_URL }}";
         window.NEXT_PUBLIC_SUPABASE_URL = "{{ NEXT_PUBLIC_SUPABASE_URL }}";
         window.NEXT_PUBLIC_SUPABASE_ANON_KEY = "{{ NEXT_PUBLIC_SUPABASE_ANON_KEY }}";
     </script>
-    <script src="/static/script.js"></script>
+
+    <!-- Main React IDE App Implementation -->
+    <script type="text/babel">
+    {% raw %}
+        const { useState, useEffect, useRef } = React;
+
+        function App() {
+            // Layout & Selection state
+            const [files, setFiles] = useState([]);
+            const [openTabs, setOpenTabs] = useState([]);
+            const [activeTab, setActiveTab] = useState(null);
+            const [activeSidebar, setActiveSidebar] = useState("explorer");
+            const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+            const [bottomTab, setBottomTab] = useState("terminal");
+
+            // Chat & Sessions
+            const [chatSessions, setChatSessions] = useState([]);
+            const [currentChatId, setCurrentChatId] = useState(null);
+            const [chatTitle, setChatTitle] = useState("MyAgent AI");
+            const [messages, setMessages] = useState([]);
+            const [inputMessage, setInputMessage] = useState("");
+            const [searchWeb, setSearchWeb] = useState(false);
+            const [isTyping, setIsTyping] = useState(false);
+            const [statusText, setStatusText] = useState("MyAgent: Ready");
+            const [workflowSteps, setWorkflowSteps] = useState([]);
+            const [isWorkflowExpanded, setIsWorkflowExpanded] = useState(true);
+            const [isWorkflowCompleted, setIsWorkflowCompleted] = useState(false);
+
+            // Memory & MCP States
+            const [memoryFacts, setMemoryFacts] = useState([]);
+            const [showMemoryDrawer, setShowMemoryDrawer] = useState(false);
+            const [mcpConfigText, setMcpConfigText] = useState("");
+            const [showMcpModal, setShowMcpModal] = useState(false);
+            const [showGithubModal, setShowGithubModal] = useState(false);
+            const [githubToken, setGithubToken] = useState("");
+            const [githubRepos, setGithubRepos] = useState([]);
+            const [selectedRepoUrl, setSelectedRepoUrl] = useState("");
+
+            // Suggested Code Fix & Diff
+            const [suggestedFix, setSuggestedFix] = useState(null); // { original: "", replacement: "", filepath: "" }
+
+            // Auth session
+            const [userSession, setUserSession] = useState(null);
+            const [authLoading, setAuthLoading] = useState(true);
+            const [supabaseClient, setSupabaseClient] = useState(null);
+
+            // Monaco Editor instance
+            const [monacoInstance, setMonacoInstance] = useState(null);
+            const [editorInstance, setEditorInstance] = useState(null);
+            const editorRef = useRef(null);
+
+            // Toast system
+            const [toasts, setToasts] = useState([]);
+
+            const triggerToast = (msg, type = "success") => {
+                const id = Date.now();
+                setToasts(prev => [...prev, { id, msg, type }]);
+                setTimeout(() => {
+                    setToasts(prev => prev.filter(t => t.id !== id));
+                }, 4000);
+            };
+
+            // Detect Language from file extension
+            const getLanguageFromExtension = (filename) => {
+                if (!filename) return "plaintext";
+                const ext = filename.split('.').pop().toLowerCase();
+                switch (ext) {
+                    case 'js': case 'jsx': return 'javascript';
+                    case 'ts': case 'tsx': return 'typescript';
+                    case 'py': return 'python';
+                    case 'html': return 'html';
+                    case 'css': return 'css';
+                    case 'json': return 'json';
+                    case 'md': return 'markdown';
+                    case 'lua': case 'luau': return 'lua';
+                    case 'gd': return 'gdscript';
+                    default: return 'plaintext';
+                }
+            };
+
+            // Initialize Supabase & Auth
+            useEffect(() => {
+                const sUrl = window.NEXT_PUBLIC_SUPABASE_URL;
+                const sKey = window.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+                const isValidUrl = (url) => {
+                    if (!url || typeof url !== "string") return false;
+                    if (url.includes("{{") || url.includes("}}")) return false;
+                    try {
+                        new URL(url);
+                        return true;
+                    } catch (_) {
+                        return false;
+                    }
+                };
+
+                let client = null;
+                if (isValidUrl(sUrl) && sKey && !sKey.includes("{{") && typeof supabase !== 'undefined') {
+                    try {
+                        client = supabase.createClient(sUrl, sKey);
+                        setSupabaseClient(client);
+                        window.supabaseInstance = client;
+                        console.log("Supabase client initialized in IDE React component.");
+                    } catch (err) {
+                        console.error("Supabase init error:", err);
+                    }
+                }
+
+                if (client) {
+                    client.auth.onAuthStateChange((event, session) => {
+                        if (session && session.user) {
+                            setUserSession({
+                                username: session.user.user_metadata?.full_name || session.user.user_metadata?.user_name || "GitHub User",
+                                avatar: session.user.user_metadata?.avatar_url || "https://github.com/identicons/guest.png",
+                                email: session.user.email
+                            });
+                        } else {
+                            setUserSession(null);
+                        }
+                        setAuthLoading(false);
+                    });
+                } else {
+                    // Backend cookie verification fallback
+                    fetch('/auth/me')
+                        .then(res => res.ok ? res.json() : null)
+                        .then(data => {
+                            if (data && data.authenticated !== false) {
+                                setUserSession({
+                                    username: data.name || data.username || "GitHub User",
+                                    avatar: data.avatar_url || "https://github.com/identicons/guest.png",
+                                    email: data.email || `@${data.username}`
+                                });
+                            } else {
+                                setUserSession(null);
+                            }
+                            setAuthLoading(false);
+                        })
+                        .catch(() => {
+                            setUserSession(null);
+                            setAuthLoading(false);
+                        });
+                }
+
+                // Load files listing and chat sessions
+                fetchFilesList();
+                fetchChatSessions();
+
+                // Restoring active chat from local storage
+                try {
+                    const savedHistory = localStorage.getItem("myagent_chat_history");
+                    const savedId = localStorage.getItem("myagent_chat_id");
+                    const savedTitle = localStorage.getItem("myagent_chat_title");
+                    if (savedHistory) {
+                        setMessages(JSON.parse(savedHistory));
+                        setCurrentChatId(savedId || null);
+                        setChatTitle(savedTitle || "MyAgent AI");
+                    }
+                } catch (e) {
+                    console.error("Failed to load local chat state", e);
+                }
+            }, []);
+
+            // Setup Monaco Editor inside editorRef container
+            useEffect(() => {
+                if (!editorRef.current) return;
+
+                monaco_loader.init().then(monaco => {
+                    setMonacoInstance(monaco);
+
+                    // Add Luau custom configurations
+                    monaco.languages.register({ id: 'lua' });
+
+                    const editor = monaco.editor.create(editorRef.current, {
+                        value: "-- Open a file from the explorer on the left or click 'Open Folder' to start coding.",
+                        language: "lua",
+                        theme: "vs-dark",
+                        automaticLayout: true,
+                        minimap: { enabled: false },
+                        fontSize: 14,
+                        fontFamily: "'Fira Code', 'Courier New', monospace",
+                        lineHeight: 22,
+                        cursorBlinking: "smooth",
+                        cursorSmoothCaretAnimation: "on",
+                        scrollbar: {
+                            vertical: "visible",
+                            horizontal: "visible",
+                            useShadows: false,
+                        }
+                    });
+
+                    setEditorInstance(editor);
+
+                    // Setup Ctrl + S handler
+                    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+                        handleManualSave(editor);
+                    });
+                });
+
+                return () => {
+                    if (editorInstance) {
+                        editorInstance.dispose();
+                    }
+                };
+            }, [editorRef]);
+
+            // Handle switching files (activeTab)
+            useEffect(() => {
+                if (!editorInstance || !monacoInstance || !activeTab) return;
+
+                // Load file content
+                fetch(`/api/ide/file?path=${encodeURIComponent(activeTab)}`)
+                    .then(res => res.ok ? res.json() : null)
+                    .then(data => {
+                        if (data && data.status === "success") {
+                            const model = monacoInstance.editor.createModel(
+                                data.content,
+                                getLanguageFromExtension(activeTab)
+                            );
+                            editorInstance.setModel(model);
+                            setStatusText(`Opened: ${activeTab}`);
+                        } else {
+                            triggerToast(`Failed to open file: ${activeTab}`, "error");
+                        }
+                    })
+                    .catch(() => {
+                        triggerToast(`Failed to load file content`, "error");
+                    });
+            }, [activeTab, editorInstance, monacoInstance]);
+
+            // Fetch list of files recursive
+            const fetchFilesList = () => {
+                fetch('/api/ide/files')
+                    .then(res => res.ok ? res.json() : null)
+                    .then(data => {
+                        if (data && data.status === "success") {
+                            setFiles(data.files || []);
+                        }
+                    });
+            };
+
+            // Fetch chat sessions
+            const fetchChatSessions = () => {
+                fetch('/chats')
+                    .then(res => res.ok ? res.json() : [])
+                    .then(data => {
+                        setChatSessions(data || []);
+                    });
+            };
+
+            // Manual Ctrl+S save
+            const handleManualSave = (editor) => {
+                if (!activeTab) {
+                    triggerToast("No active file to save!", "error");
+                    return;
+                }
+                const content = editor.getValue();
+                fetch('/api/ide/file', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filepath: activeTab, content })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === "success") {
+                        triggerToast(`Saved ${activeTab} successfully`, "success");
+                    } else {
+                        triggerToast(`Failed to save file`, "error");
+                    }
+                })
+                .catch(() => {
+                    triggerToast(`Failed to save file`, "error");
+                });
+            };
+
+            // Handle manual input send to MyAgent AI
+            const handleSendPrompt = async () => {
+                if (inputMessage.trim() === "" || isTyping) return;
+                const userMsg = inputMessage;
+                setInputMessage("");
+
+                // Display local message immediately
+                const updatedMessages = [...messages, { role: "user", content: userMsg }];
+                setMessages(updatedMessages);
+                localStorage.setItem("myagent_chat_history", JSON.stringify(updatedMessages));
+
+                setIsTyping(true);
+                setWorkflowSteps([]);
+                setIsWorkflowCompleted(false);
+                setIsWorkflowExpanded(true);
+
+                // Prepare file context
+                let fileContextPayload = "";
+                if (activeTab && editorInstance) {
+                    const code = editorInstance.getValue();
+                    fileContextPayload = `\n\n--- Active File Context: ${activeTab} ---\n${code}\n--- End Active File Context ---\n`;
+                }
+
+                // Call agent backend with prompt and file context
+                const formData = new FormData();
+                formData.append("message", `${fileContextPayload}${userMsg}`);
+                if (currentChatId) {
+                    formData.append("chat_id", currentChatId);
+                }
+                formData.append("search_web", searchWeb ? "true" : "false");
+
+                try {
+                    const endpoint = `/chat`;
+                    const response = await fetch(endpoint, {
+                        method: "POST",
+                        headers: { "Accept": "text/event-stream" },
+                        body: formData
+                    });
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = "";
+                    let aiReply = "";
+                    let finalId = currentChatId;
+                    let finalTitle = chatTitle;
+
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split("\n");
+                        buffer = lines.pop();
+
+                        for (const line of lines) {
+                            const trimmed = line.trim();
+                            if (trimmed.startsWith("data: ")) {
+                                const payloadStr = trimmed.slice(6);
+                                try {
+                                    const data = JSON.parse(payloadStr);
+                                    if (data.type === "status") {
+                                        setWorkflowSteps(prev => {
+                                            if (!prev.includes(data.message)) {
+                                                return [...prev, data.message];
+                                            }
+                                            return prev;
+                                        });
+                                        setStatusText(data.message);
+                                    } else if (data.type === "final") {
+                                        setIsWorkflowCompleted(true);
+                                        aiReply = data.reply;
+                                        if (data.chat_id) {
+                                            finalId = data.chat_id;
+                                            setCurrentChatId(data.chat_id);
+                                            localStorage.setItem("myagent_chat_id", data.chat_id);
+                                        }
+                                        if (data.title) {
+                                            finalTitle = data.title;
+                                            setChatTitle(data.title);
+                                            localStorage.setItem("myagent_chat_title", data.title);
+                                        }
+                                    } else if (data.type === "error") {
+                                        triggerToast(data.message, "error");
+                                    }
+                                } catch (e) {
+                                    console.error("SSE parse error", e);
+                                }
+                            }
+                        }
+                    }
+
+                    if (aiReply) {
+                        // Extract any code diff or suggested fix from reply
+                        // Standard format: [FILE: <path>] <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE
+                        const match = aiReply.match(/<<<<<<< SEARCH([\s\S]*?)=======([\s\S]*?)>>>>>>> REPLACE/);
+                        if (match) {
+                            const original = match[1].trim();
+                            const replacement = match[2].trim();
+                            setSuggestedFix({ original, replacement, filepath: activeTab });
+                        }
+
+                        const finalHistory = [...updatedMessages, { role: "ai", content: aiReply }];
+                        setMessages(finalHistory);
+                        localStorage.setItem("myagent_chat_history", JSON.stringify(finalHistory));
+                    }
+
+                    setIsTyping(false);
+                    fetchChatSessions();
+                } catch (err) {
+                    console.error(err);
+                    setIsTyping(false);
+                    triggerToast("Chat endpoint connection failed", "error");
+                }
+            };
+
+            // Apply Suggested Code Diff directly to Monaco editor
+            const handleApplyFix = () => {
+                if (!suggestedFix || !editorInstance) return;
+                const code = editorInstance.getValue();
+                const { original, replacement } = suggestedFix;
+
+                if (original === "" || code.includes(original)) {
+                    let updatedCode;
+                    if (original === "") {
+                        // Append to end of file
+                        updatedCode = code + "\n" + replacement;
+                    } else {
+                        updatedCode = code.replace(original, replacement);
+                    }
+                    editorInstance.setValue(updatedCode);
+                    setSuggestedFix(null);
+                    triggerToast("Code changes applied successfully!", "success");
+
+                    // Auto-save the applied code changes
+                    handleManualSave(editorInstance);
+                } else {
+                    triggerToast("Cannot match the exact original block in the active file.", "error");
+                }
+            };
+
+            // Trigger Quick Actions: Fix, Refactor, Docs
+            const triggerQuickAction = (actionType) => {
+                if (!activeTab) {
+                    triggerToast("Please select a file from explorer first!", "error");
+                    return;
+                }
+                let prompt = "";
+                if (actionType === "fix") {
+                    prompt = "Optimize the following active code tab for syntax, safety, and Roblox/Python guidelines. Find and fix any hidden bugs.";
+                } else if (actionType === "refactor") {
+                    prompt = "Refactor this module to improve execution performance and clean up nested statements.";
+                } else if (actionType === "docs") {
+                    prompt = "Write clean markdown documentation of the parameters, design, and use cases of this active script.";
+                }
+                setInputMessage(prompt);
+            };
+
+            // Handle opening directories/folders state
+            const handleOpenFolderState = () => {
+                // Since web sandbox operates directly in Workspace folder, simulate clone or trigger repos selection
+                setShowGithubModal(true);
+            };
+
+            // Switch to a file and open tab
+            const handleSelectFile = (path) => {
+                if (!openTabs.includes(path)) {
+                    setOpenTabs([...openTabs, path]);
+                }
+                setActiveTab(path);
+            };
+
+            const handleCloseTab = (e, path) => {
+                e.stopPropagation();
+                const index = openTabs.indexOf(path);
+                const filtered = openTabs.filter(t => t !== path);
+                setOpenTabs(filtered);
+                if (activeTab === path) {
+                    if (filtered.length > 0) {
+                        setActiveTab(filtered[Math.min(index, filtered.length - 1)]);
+                    } else {
+                        setActiveTab(null);
+                    }
+                }
+            };
+
+            // Delete chat session
+            const handleDeleteSession = async (e, id) => {
+                e.stopPropagation();
+                try {
+                    await fetch(`/chats/${id}`, { method: "DELETE" });
+                    if (currentChatId === id) {
+                        setCurrentChatId(null);
+                        setMessages([]);
+                        setChatTitle("MyAgent AI");
+                        localStorage.removeItem("myagent_chat_history");
+                        localStorage.removeItem("myagent_chat_id");
+                    }
+                    fetchChatSessions();
+                    triggerToast("Deleted session", "success");
+                } catch (e) {
+                    triggerToast("Failed to delete chat", "error");
+                }
+            };
+
+            // Rename chat session
+            const handleRenameSession = async (e, id, oldTitle) => {
+                e.stopPropagation();
+                const newTitle = prompt("Enter new name:", oldTitle);
+                if (!newTitle) return;
+                try {
+                    await fetch(`/chats/${id}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ title: newTitle.trim() })
+                    });
+                    if (currentChatId === id) {
+                        setChatTitle(newTitle);
+                    }
+                    fetchChatSessions();
+                } catch (e) {
+                    triggerToast("Rename failed", "error");
+                }
+            };
+
+            // Connect GitHub account & retrieve repos
+            const handleConnectGitHub = async () => {
+                if (!githubToken.trim()) {
+                    triggerToast("Please provide your token", "error");
+                    return;
+                }
+                try {
+                    const resp = await fetch('/api/github/repos', {
+                        headers: { "X-GitHub-Token": githubToken }
+                    });
+                    const data = await resp.json();
+                    if (data.status === "success" && data.repos) {
+                        setGithubRepos(data.repos);
+                        triggerToast("Loaded repository listings!", "success");
+                    } else {
+                        triggerToast("Token not recognized. Please check and retry.", "error");
+                    }
+                } catch (err) {
+                    triggerToast("Failed to connect GitHub APIs.", "error");
+                }
+            };
+
+            // Clone selected GitHub repo
+            const handleCloneRepo = async () => {
+                if (!selectedRepoUrl) return;
+                triggerToast("Cloning repository into workspace...", "success");
+                try {
+                    const resp = await fetch('/api/github/clone', {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ repo_url: selectedRepoUrl, token: githubToken })
+                    });
+                    const data = await resp.json();
+                    if (data.status === "success") {
+                        triggerToast("Successfully cloned repository!", "success");
+                        setShowGithubModal(false);
+                        fetchFilesList();
+                    } else {
+                        triggerToast(data.message || "Failed to clone", "error");
+                    }
+                } catch (err) {
+                    triggerToast("Server connection failed.", "error");
+                }
+            };
+
+            // GitHub Login redirect
+            const handleGitHubLoginRedirect = () => {
+                if (supabaseClient) {
+                    const redirectUrl = window.location.origin.endsWith('/') ? window.location.origin : (window.location.origin + '/');
+                    supabaseClient.auth.signInWithOAuth({
+                        provider: 'github',
+                        options: { redirectTo: redirectUrl }
+                    });
+                } else {
+                    window.location.href = "/auth/github/login";
+                }
+            };
+
+            // GitHub logout
+            const handleGitHubLogout = async () => {
+                if (supabaseClient) {
+                    await supabaseClient.auth.signOut();
+                    window.location.reload();
+                } else {
+                    window.location.href = "/auth/logout";
+                }
+            };
+
+            return (
+                <div class="flex flex-col h-screen text-white bg-[#131313] select-none font-sans overflow-hidden">
+                    {/* Toast Notification Bar */}
+                    <div class="toast-container">
+                        {toasts.map(t => (
+                            <div key={t.id} class={`toast ${t.type === 'error' ? 'toast-error' : ''}`}>
+                                <span>{t.type === 'error' ? '⚠️' : '✓'}</span>
+                                <span>{t.msg}</span>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Top Navbar */}
+                    <div class="h-12 border-b border-borderCol flex items-center justify-between px-4 bg-panelBg">
+                        <div class="flex items-center space-x-6">
+                            <div class="flex items-center space-x-2 text-brandBlue font-bold text-lg">
+                                <i class="fa-solid fa-code-merge"></i>
+                                <span>MyAgent AI</span>
+                            </div>
+                            <div class="hidden md:flex items-center space-x-4 text-xs font-medium text-gray-300">
+                                {["File", "Edit", "Selection", "View", "Go", "Run", "Terminal", "Help"].map(m => (
+                                    <button key={m} class="hover:text-white transition-colors py-1 px-2 rounded hover:bg-surfaceBg">{m}</button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Top Bar Right: Settings and OAuth profile */}
+                        <div class="flex items-center space-x-4">
+                            <button onClick={() => setShowMcpModal(true)} class="text-xs text-gray-300 hover:text-white bg-surfaceBg px-3 py-1.5 rounded border border-borderCol transition-colors flex items-center space-x-1.5">
+                                <i class="fa-solid fa-plug"></i>
+                                <span>MCP Config</span>
+                            </button>
+                            <button onClick={() => { setShowMemoryDrawer(true); }} class="text-xs text-gray-300 hover:text-white bg-surfaceBg px-3 py-1.5 rounded border border-borderCol transition-colors flex items-center space-x-1.5">
+                                <i class="fa-solid fa-brain"></i>
+                                <span>Memory Context</span>
+                            </button>
+                            <div class="flex items-center space-x-2 border-l border-borderCol pl-4">
+                                {authLoading ? (
+                                    <div class="animate-spin-custom h-4 w-4 border-2 border-t-brandBlue border-borderCol rounded-full"></div>
+                                ) : userSession ? (
+                                    <div class="flex items-center space-x-2">
+                                        <img src={userSession.avatar} class="h-6 w-6 rounded-full border border-borderCol" alt="avatar" />
+                                        <span class="text-xs hidden sm:inline-block font-medium">{userSession.username}</span>
+                                        <button onClick={handleGitHubLogout} class="text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 py-1 px-2 rounded" title="Log out">
+                                            <i class="fa-solid fa-right-from-bracket"></i>
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button onClick={handleGitHubLoginRedirect} class="bg-brandBlue text-white hover:bg-blue-600 transition-colors text-xs font-semibold px-3 py-1.5 rounded flex items-center space-x-1.5">
+                                        <i class="fa-brands fa-github"></i>
+                                        <span>Sign In</span>
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Middle Workspace area */}
+                    <div class="flex-1 flex overflow-hidden">
+                        {/* Left Vertical Activity Bar */}
+                        <div class="w-14 bg-panelBg border-r border-borderCol flex flex-col items-center py-4 space-y-6 text-[#858593]">
+                            {[
+                                { id: "explorer", icon: "fa-regular fa-folder-open", tooltip: "Explorer" },
+                                { id: "chats", icon: "fa-regular fa-comment-dots", tooltip: "Chat Sessions" },
+                                { id: "search", icon: "fa-solid fa-magnifying-glass", tooltip: "Search" },
+                                { id: "git", icon: "fa-solid fa-code-fork", tooltip: "Source Control" },
+                            ].map(item => (
+                                <button key={item.id} onClick={() => { setActiveSidebar(item.id); setIsSidebarCollapsed(false); }} class={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors hover:text-white ${activeSidebar === item.id && !isSidebarCollapsed ? 'bg-surfaceBg text-white border border-borderCol' : ''}`} title={item.tooltip}>
+                                    <i class={`${item.icon} text-lg`}></i>
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Collapsible Panel (Sidebar body) */}
+                        {!isSidebarCollapsed && (
+                            <div class="w-64 bg-surfaceBg border-r border-borderCol flex flex-col h-full">
+                                <div class="h-10 border-b border-borderCol flex items-center justify-between px-4 font-bold text-xs uppercase tracking-wider text-textMuted">
+                                    <span>{activeSidebar === "explorer" ? "Explorer" : activeSidebar === "chats" ? "Chat Rooms" : activeSidebar}</span>
+                                    <button onClick={() => setIsSidebarCollapsed(true)} class="hover:text-white text-gray-500 text-sm"><i class="fa-solid fa-angles-left"></i></button>
+                                </div>
+
+                                <div class="flex-1 overflow-y-auto p-2">
+                                    {activeSidebar === "explorer" && (
+                                        <div class="space-y-4">
+                                            {files.length === 0 ? (
+                                                <div class="text-center py-12 space-y-4 px-4">
+                                                    <i class="fa-solid fa-folder-tree text-3xl text-gray-600 block"></i>
+                                                    <div class="text-xs text-textMuted">No project folder opened in Web Workspace.</div>
+                                                    <button onClick={handleOpenFolderState} class="w-full bg-brandBlue text-white hover:bg-blue-600 font-semibold py-2 px-4 rounded text-xs transition-colors flex items-center justify-center space-x-1.5 shadow-md">
+                                                        <i class="fa-solid fa-folder-open"></i>
+                                                        <span>Open Folder</span>
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div class="space-y-1">
+                                                    <div class="text-xs font-semibold text-gray-400 px-2 flex items-center space-x-1.5 pb-1">
+                                                        <i class="fa-solid fa-chevron-down text-[10px]"></i>
+                                                        <span>WORKSPACE-ROOT</span>
+                                                    </div>
+                                                    {files.map(f => (
+                                                        <button key={f} onClick={() => handleSelectFile(f)} class={`w-full text-left px-4 py-1.5 rounded text-xs hover:bg-panelBg hover:text-white transition-colors flex items-center space-x-2 ${activeTab === f ? 'bg-panelBg text-white border-l-2 border-brandBlue' : 'text-gray-400'}`}>
+                                                            <i class={`fa-solid ${f.endsWith('.py') ? 'fa-brands fa-python text-yellow-500' : f.endsWith('.luau') ? 'fa-solid fa-gem text-blue-400' : 'fa-solid fa-file-code text-brandBlue'}`}></i>
+                                                            <span class="truncate">{f}</span>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {activeSidebar === "chats" && (
+                                        <div class="space-y-2">
+                                            <button onClick={() => { setMessages([]); setCurrentChatId(null); setChatTitle("MyAgent AI"); }} class="w-full bg-surfaceBg border border-borderCol hover:border-brandBlue hover:text-white py-2 px-3 rounded text-xs font-medium flex items-center justify-center space-x-1.5 transition-colors mb-3">
+                                                <i class="fa-solid fa-plus"></i>
+                                                <span>New Chat Session</span>
+                                            </button>
+                                            {chatSessions.length === 0 ? (
+                                                <div class="text-xs text-center text-textMuted py-8">No saved chat sessions</div>
+                                            ) : (
+                                                <div class="space-y-1">
+                                                    {chatSessions.map(sess => (
+                                                        <div key={sess.id} onClick={() => {
+                                                            setCurrentChatId(sess.id);
+                                                            setChatTitle(sess.title);
+                                                            setMessages(sess.messages || []);
+                                                            localStorage.setItem("myagent_chat_history", JSON.stringify(sess.messages || []));
+                                                            localStorage.setItem("myagent_chat_id", sess.id);
+                                                            localStorage.setItem("myagent_chat_title", sess.title);
+                                                        }} class={`group relative p-2.5 rounded text-xs cursor-pointer hover:bg-panelBg transition-colors flex items-center justify-between ${currentChatId === sess.id ? 'bg-panelBg border-r border-brandBlue' : ''}`}>
+                                                            <div class="flex items-center space-x-2 truncate pr-6">
+                                                                <i class="fa-regular fa-comment text-gray-500"></i>
+                                                                <span class="truncate text-gray-300 group-hover:text-white font-medium">{sess.title}</span>
+                                                            </div>
+                                                            <div class="opacity-0 group-hover:opacity-100 flex items-center space-x-1 transition-opacity absolute right-2">
+                                                                <button onClick={(e) => handleRenameSession(e, sess.id, sess.title)} class="hover:text-brandBlue text-gray-400 p-0.5"><i class="fa-solid fa-pencil"></i></button>
+                                                                <button onClick={(e) => handleDeleteSession(e, sess.id)} class="hover:text-red-400 text-gray-400 p-0.5"><i class="fa-solid fa-trash-can"></i></button>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {activeSidebar !== "explorer" && activeSidebar !== "chats" && (
+                                        <div class="text-xs text-textMuted text-center py-12">This tab function is fully simulated inside this prototype environment.</div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Central Workspace / Code Editor Area */}
+                        <div class="flex-1 flex flex-col h-full bg-[#1e1e1e] min-w-0">
+                            {/* Horizontal Tabs Bar */}
+                            <div class="h-9 bg-panelBg border-b border-borderCol flex items-center overflow-x-auto select-none scrollbar-none">
+                                {openTabs.map(tab => (
+                                    <div key={tab} onClick={() => setActiveTab(tab)} class={`h-full px-4 border-r border-borderCol flex items-center space-x-2 text-xs cursor-pointer transition-colors ${activeTab === tab ? 'bg-[#1e1e1e] text-white font-medium border-t-2 border-brandBlue' : 'bg-[#18181c]/50 text-gray-500 hover:text-gray-300'}`}>
+                                        <i class="fa-solid fa-code text-[11px]"></i>
+                                        <span>{tab}</span>
+                                        <button onClick={(e) => handleCloseTab(e, tab)} class="hover:bg-gray-700/50 hover:text-white rounded-full p-0.5 text-[9px]"><i class="fa-solid fa-xmark"></i></button>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Path Breadcrumbs Bar */}
+                            <div class="h-7 bg-[#1e1e1e] border-b border-borderCol flex items-center px-4 text-[10px] text-textMuted space-x-2">
+                                <span class="uppercase font-bold text-[9px] tracking-wider text-gray-500">LUAU-PROJECT</span>
+                                <i class="fa-solid fa-chevron-right text-[8px] text-gray-600"></i>
+                                <span>{activeTab || "No file opened"}</span>
+                            </div>
+
+                            {/* Main Editor Surface */}
+                            <div class="flex-1 relative overflow-hidden">
+                                <div ref={editorRef} class="monaco-container-outer"></div>
+                            </div>
+
+                            {/* Bottom Resizable Tabbed Panel */}
+                            <div class="h-48 bg-panelBg border-t border-borderCol flex flex-col">
+                                <div class="h-8 border-b border-borderCol flex items-center justify-between px-4 text-xs font-semibold bg-panelBg">
+                                    <div class="flex space-x-4">
+                                        {["Terminal", "Output", "Debug Console"].map(t => (
+                                            <button key={t} onClick={() => setBottomTab(t.toLowerCase())} class={`py-1.5 ${bottomTab === t.toLowerCase() ? 'text-brandBlue border-b-2 border-brandBlue font-bold' : 'text-textMuted hover:text-white'}`}>{t}</button>
+                                        ))}
+                                    </div>
+                                    <div class="text-[10px] text-textMuted flex items-center space-x-2">
+                                        <i class="fa-solid fa-check-circle text-green-500"></i>
+                                        <span>Ready</span>
+                                    </div>
+                                </div>
+                                <div class="flex-1 p-4 overflow-y-auto font-mono text-xs text-gray-300 space-y-1">
+                                    {bottomTab === "terminal" && (
+                                        <div>
+                                            <div class="text-textMuted">[09:21:44] [INFO] Watcher started for workspace directory...</div>
+                                            <div class="text-textMuted">[09:21:45] [INFO] Environment successfully loaded with code editor configurations.</div>
+                                            <div class="text-brandBlue flex items-center space-x-2">
+                                                <span>$</span>
+                                                <input type="text" placeholder="Run command in workspace..." class="bg-transparent border-none outline-none text-white text-xs flex-1" />
+                                            </div>
+                                        </div>
+                                    )}
+                                    {bottomTab === "output" && (
+                                        <div class="text-green-400">--- Execution watch output streams ---<br/>Compiled scripts successfully with 0 errors, 0 warnings.</div>
+                                    )}
+                                    {bottomTab === "debug console" && (
+                                        <div class="text-yellow-500">No active debugger connected. Config ready.</div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Right Panel: MyAgent AI Interactive chat Panel */}
+                        <div class="w-96 bg-panelBg border-l border-borderCol flex flex-col h-full">
+                            <div class="h-12 border-b border-borderCol flex items-center justify-between px-4 font-bold text-xs bg-panelBg text-brandBlue flex items-center space-x-1.5">
+                                <div class="flex items-center space-x-1.5">
+                                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                                    <span>MyAgent AI Chat Assistant</span>
+                                </div>
+                                <button class="text-gray-500 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+                            </div>
+
+                            {/* Chat messages feed */}
+                            <div class="flex-1 overflow-y-auto p-4 space-y-4">
+                                {messages.length === 0 ? (
+                                    <div class="text-center py-16 space-y-4">
+                                        <i class="fa-solid fa-wand-magic-sparkles text-4xl text-gray-700 block"></i>
+                                        <div class="text-sm font-semibold">How can MyAgent help you code today?</div>
+                                        <p class="text-xs text-textMuted max-w-xs mx-auto">Select a file from the explorer on the left, type prompt on the input below to debug, fix, or optimize.</p>
+                                    </div>
+                                ) : (
+                                    messages.map((m, idx) => (
+                                        <div key={idx} class={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
+                                            <div class="text-[10px] text-textMuted mb-1 font-semibold flex items-center space-x-1">
+                                                <i class={`fa-solid ${m.role === 'user' ? 'fa-user' : 'fa-robot text-brandBlue'}`}></i>
+                                                <span>{m.role === 'user' ? 'You' : 'MyAgent AI'}</span>
+                                            </div>
+                                            <div class={`p-3 rounded-lg text-xs max-w-[85%] leading-relaxed ${m.role === 'user' ? 'bg-[#32323e] text-white rounded-tr-none' : 'bg-surfaceBg text-gray-200 rounded-tl-none border border-borderCol'}`}>
+                                                <div class="markdown-body text-xs" style={{ background: 'transparent' }} dangerouslySetInnerHTML={{ __html: marked.parse(m.content) }}></div>
+                                                {m.model && (
+                                                    <div class="text-[9px] text-textMuted mt-2 pt-1 border-t border-borderCol">
+                                                        {m.model} | {m.total_tokens} tokens
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+
+                                {/* Real-time workflow status drawer */}
+                                {isTyping && (
+                                    <div class="flex flex-col items-start">
+                                        <div class="text-[10px] text-textMuted mb-1 font-semibold flex items-center space-x-1">
+                                            <i class="fa-solid fa-spinner animate-spin text-brandBlue"></i>
+                                            <span>Processing Pipeline</span>
+                                        </div>
+                                        <div class="w-full bg-surfaceBg border border-borderCol rounded-lg p-3">
+                                            <div class="flex items-center justify-between cursor-pointer" onClick={() => setIsWorkflowExpanded(!isWorkflowExpanded)}>
+                                                <div class="flex items-center space-x-2">
+                                                    <span class={`px-2 py-0.5 rounded text-[9px] font-bold ${isWorkflowCompleted ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
+                                                        {isWorkflowCompleted ? 'DONE' : 'THINK'}
+                                                    </span>
+                                                    <span class="text-[11px] font-medium text-gray-300 truncate max-w-[150px]">{statusText}</span>
+                                                </div>
+                                                <i class={`fa-solid fa-chevron-down text-gray-500 text-[10px] transition-transform ${isWorkflowExpanded ? 'rotate-180' : ''}`}></i>
+                                            </div>
+                                            {isWorkflowExpanded && (
+                                                <div class="mt-2.5 pt-2 border-t border-borderCol max-h-24 overflow-y-auto space-y-1 font-mono text-[10px] text-gray-400">
+                                                    {workflowSteps.map((step, idx) => (
+                                                        <div key={idx} class="flex items-center space-x-2">
+                                                            <i class="fa-solid fa-check text-green-500 text-[9px]"></i>
+                                                            <span>{step}</span>
+                                                        </div>
+                                                    ))}
+                                                    {!isWorkflowCompleted && (
+                                                        <div class="flex items-center space-x-2 text-brandBlue">
+                                                            <i class="fa-solid fa-ellipsis animate-pulse"></i>
+                                                            <span>Thinking...</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Action Buttons Box */}
+                            <div class="p-3 bg-panelBg border-t border-borderCol space-y-2">
+                                <div class="grid grid-cols-3 gap-2">
+                                    <button onClick={() => triggerQuickAction("fix")} class="bg-surfaceBg hover:border-brandBlue hover:text-white border border-borderCol py-2 px-1 rounded text-[11px] font-medium flex items-center justify-center space-x-1.5 transition-colors">
+                                        <i class="fa-solid fa-wrench text-amber-500"></i>
+                                        <span>Fix</span>
+                                    </button>
+                                    <button onClick={() => triggerQuickAction("refactor")} class="bg-surfaceBg hover:border-brandBlue hover:text-white border border-borderCol py-2 px-1 rounded text-[11px] font-medium flex items-center justify-center space-x-1.5 transition-colors">
+                                        <i class="fa-solid fa-rotate text-blue-400"></i>
+                                        <span>Refactor</span>
+                                    </button>
+                                    <button onClick={() => triggerQuickAction("docs")} class="bg-surfaceBg hover:border-brandBlue hover:text-white border border-borderCol py-2 px-1 rounded text-[11px] font-medium flex items-center justify-center space-x-1.5 transition-colors">
+                                        <i class="fa-regular fa-file-lines text-green-400"></i>
+                                        <span>Docs</span>
+                                    </button>
+                                </div>
+
+                                {/* Suggested Fix Diff / Viewer */}
+                                {suggestedFix && (
+                                    <div class="bg-surfaceBg border border-amber-500/30 rounded p-2.5 space-y-2.5">
+                                        <div class="flex items-center justify-between">
+                                            <span class="text-[10px] text-amber-400 font-bold flex items-center space-x-1">
+                                                <i class="fa-solid fa-triangle-exclamation"></i>
+                                                <span>SUGGESTED FIX DETECTED</span>
+                                            </span>
+                                            <button onClick={handleApplyFix} class="bg-green-600 hover:bg-green-500 text-white font-bold text-[10px] px-2.5 py-1 rounded transition-colors shadow-md">Apply Change</button>
+                                        </div>
+                                        <div class="font-mono text-[9px] max-h-32 overflow-y-auto border border-borderCol rounded bg-black/40 p-1.5 space-y-1">
+                                            {suggestedFix.original && (
+                                                <div class="text-red-400 bg-red-500/10 p-1 rounded">
+                                                    <span class="font-bold">- OLD:</span> {suggestedFix.original}
+                                                </div>
+                                            )}
+                                            <div class="text-green-400 bg-green-500/10 p-1 rounded">
+                                                <span class="font-bold">+ NEW:</span> {suggestedFix.replacement}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Chat input box */}
+                            <div class="p-3 bg-panelBg border-t border-borderCol space-y-2">
+                                <div class="bg-surfaceBg border border-borderCol rounded-lg p-2.5 flex items-center space-x-2">
+                                    <button class="text-gray-400 hover:text-white text-sm" title="Attach assets"><i class="fa-solid fa-paperclip"></i></button>
+                                    <input type="text" value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendPrompt()} placeholder="Ask MyAgent or type '/' for commands..." class="bg-transparent border-none outline-none text-xs text-white flex-1" />
+                                    <div class="flex items-center space-x-2">
+                                        <button onClick={() => setSearchWeb(!searchWeb)} class={`px-2 py-1 rounded text-[9px] font-bold ${searchWeb ? 'bg-brandBlue text-white' : 'bg-panelBg text-gray-400 hover:text-white'}`}>Search</button>
+                                        <button onClick={handleSendPrompt} class="text-brandBlue hover:text-blue-400 text-sm"><i class="fa-solid fa-paper-plane"></i></button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Bottom Status Bar */}
+                    <div class="h-6 bg-brandBlue text-white text-[11px] flex items-center justify-between px-4 select-none">
+                        <div class="flex items-center space-x-4">
+                            <div class="flex items-center space-x-1">
+                                <i class="fa-solid fa-code-branch"></i>
+                                <span>main*</span>
+                            </div>
+                            <button onClick={fetchFilesList} class="hover:text-gray-200 transition-colors"><i class="fa-solid fa-rotate"></i></button>
+                            <span>MyAgent: Ready</span>
+                        </div>
+                        <div class="flex items-center space-x-4">
+                            <span>Ln 12, Col 42</span>
+                            <span>Spaces: 4</span>
+                            <span>UTF-8</span>
+                            <span>Luau</span>
+                            <i class="fa-regular fa-bell"></i>
+                        </div>
+                    </div>
+
+                    {/* Long term memory Drawer */}
+                    {showMemoryDrawer && (
+                        <div class="fixed top-0 right-0 h-full w-80 bg-panelBg border-l border-borderCol z-50 shadow-2xl flex flex-col animation-slide-in">
+                            <div class="h-12 border-b border-borderCol flex items-center justify-between px-4 font-bold text-xs">
+                                <span>Long-term Memory Context</span>
+                                <button onClick={() => setShowMemoryDrawer(false)} class="text-gray-500 hover:text-white">✕</button>
+                            </div>
+                            <div class="flex-1 overflow-y-auto p-4 space-y-2">
+                                <div class="text-xs text-textMuted mb-4">Learnings and persistent attributes MyAgent remembers about you:</div>
+                                {memoryFacts.length === 0 ? (
+                                    <div class="text-xs text-textMuted italic text-center py-12">No permanent memory is saved yet.</div>
+                                ) : (
+                                    memoryFacts.map((fact, idx) => (
+                                        <div key={idx} class="p-2.5 bg-surfaceBg rounded border border-borderCol text-xs flex justify-between items-center gap-2">
+                                            <span>{fact}</span>
+                                            <button onClick={() => {
+                                                fetch(`/memory/${idx}`, { method: 'DELETE' }).then(() => {
+                                                    setMemoryFacts(prev => prev.filter((_, i) => i !== idx));
+                                                    triggerToast("Removed memory attribute");
+                                                });
+                                            }} class="text-red-400 hover:text-red-300"><i class="fa-solid fa-trash-can"></i></button>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* MCP Configuration Modal */}
+                    {showMcpModal && (
+                        <div class="fixed inset-0 bg-black/65 flex items-center justify-center z-50 p-4">
+                            <div class="bg-panelBg border border-borderCol rounded-lg w-full max-w-lg p-5 space-y-4">
+                                <div class="flex items-center justify-between border-b border-borderCol pb-3">
+                                    <span class="font-bold text-sm text-brandBlue">Model Context Protocol (MCP) Configuration</span>
+                                    <button onClick={() => setShowMcpModal(false)} class="text-gray-500 hover:text-white">✕</button>
+                                </div>
+                                <p class="text-xs text-textMuted">MCP config setup enables connecting external workspace tools dynamically.</p>
+                                <textarea value={mcpConfigText} onChange={(e) => setMcpConfigText(e.target.value)} placeholder='{ "mcpServers": {} }' class="w-full h-48 bg-surfaceBg border border-borderCol rounded p-3 font-mono text-xs text-gray-300 focus:outline-none focus:border-brandBlue" />
+                                <div class="flex justify-end space-x-3 pt-2">
+                                    <button onClick={() => setShowMcpModal(false)} class="bg-surfaceBg hover:bg-gray-800 text-xs py-2 px-4 rounded border border-borderCol">Cancel</button>
+                                    <button onClick={() => {
+                                        fetch('/api/mcp/config', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ config_raw: mcpConfigText })
+                                        }).then(res => {
+                                            if (res.ok) {
+                                                triggerToast("Saved MCP server config!");
+                                                setShowMcpModal(false);
+                                            } else {
+                                                triggerToast("Invalid JSON schema or payload", "error");
+                                            }
+                                        });
+                                    }} class="bg-brandBlue hover:bg-blue-600 text-xs py-2 px-4 rounded font-bold">Save Config</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* GitHub Import/Clone Modal */}
+                    {showGithubModal && (
+                        <div class="fixed inset-0 bg-black/65 flex items-center justify-center z-50 p-4">
+                            <div class="bg-panelBg border border-borderCol rounded-lg w-full max-w-md p-5 space-y-4">
+                                <div class="flex items-center justify-between border-b border-borderCol pb-3">
+                                    <span class="font-bold text-sm text-brandBlue">Import GitHub Repository</span>
+                                    <button onClick={() => setShowGithubModal(false)} class="text-gray-500 hover:text-white">✕</button>
+                                </div>
+                                <div class="space-y-3">
+                                    <label class="text-xs text-textMuted font-semibold">GitHub Personal Access Token</label>
+                                    <input type="password" value={githubToken} onChange={(e) => setGithubToken(e.target.value)} placeholder="ghp_xxxx" class="w-full bg-surfaceBg border border-borderCol rounded p-2 text-xs focus:outline-none focus:border-brandBlue text-white" />
+                                    <button onClick={handleConnectGitHub} class="w-full bg-brandBlue text-white hover:bg-blue-600 font-bold py-2 px-4 rounded text-xs transition-colors">Connect Account</button>
+                                </div>
+                                {githubRepos.length > 0 && (
+                                    <div class="space-y-3 pt-2">
+                                        <label class="text-xs text-textMuted font-semibold block">Select Repository</label>
+                                        <select value={selectedRepoUrl} onChange={(e) => setSelectedRepoUrl(e.target.value)} class="w-full bg-surfaceBg border border-borderCol rounded p-2 text-xs text-white">
+                                            <option value="">-- Choose Repository --</option>
+                                            {githubRepos.map(r => (
+                                                <option key={r.clone_url} value={r.clone_url}>{r.full_name}</option>
+                                            ))}
+                                        </select>
+                                        <button onClick={handleCloneRepo} class="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded text-xs transition-colors">Clone Into Workspace</button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById("root"));
+        root.render(<App />);
+    {% endraw %}
+    </script>
 </body>
 </html>
