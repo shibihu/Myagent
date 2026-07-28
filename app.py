@@ -807,3 +807,69 @@ async def api_github_clone(req: GitHubCloneRequest):
             "status": "error",
             "message": f"Serverless clone failed: {str(e)}"
         }
+
+# ==============================================================================
+# SECURE INTERACTIVE IDE WORKSPACE FILE ACCESS ENDPOINTS
+# ==============================================================================
+
+class SaveFileRequest(BaseModel):
+    filepath: str
+    content: str
+
+@app.get("/api/ide/files")
+async def api_ide_files():
+    """Lists files recursively under the workspace directory for the React explorer sidebar."""
+    from agent.tools import WORKSPACE_DIR, ensure_workspace
+    try:
+        ensure_workspace()
+        if not os.path.exists(WORKSPACE_DIR):
+            return {"status": "success", "files": []}
+
+        files_list = []
+        for root, dirs, files in os.walk(WORKSPACE_DIR):
+            # Skip hidden files and directories, plus pycache
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d != '__pycache__' and d != 'node_modules']
+            for file in files:
+                if file.startswith('.') or file.endswith('.tmp') or file == '.github_config.json':
+                    continue
+                rel_path = os.path.relpath(os.path.join(root, file), WORKSPACE_DIR)
+                files_list.append(rel_path.replace("\\", "/"))
+
+        return {"status": "success", "files": sorted(files_list)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/ide/file")
+async def api_ide_get_file(path: str):
+    """Loads content of a specific file from the workspace."""
+    from agent.tools import WORKSPACE_DIR, clean_path, ensure_workspace
+    try:
+        ensure_workspace()
+        target_path = clean_path(path)
+        if not os.path.exists(target_path):
+            raise HTTPException(status_code=404, detail="File not found")
+
+        with open(target_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        return {"status": "success", "content": content}
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/ide/file")
+async def api_ide_save_file(req: SaveFileRequest):
+    """Saves content of a specific file into the workspace."""
+    from agent.tools import WORKSPACE_DIR, clean_path, ensure_workspace
+    try:
+        ensure_workspace()
+        target_path = clean_path(req.filepath)
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(req.content)
+
+        return {"status": "success", "message": f"Successfully saved {req.filepath}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
