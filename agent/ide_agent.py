@@ -48,8 +48,8 @@ class IDEAgent:
         elif has_repo:
             env_status = "WORKSPACE WITH CLONED REPOSITORY (Repository Present)"
             env_instruction = (
-                "1. If the user requests to create or modify a file WITHOUT explicitly providing a directory path, automatically default the file path to the Root Directory (e.g., './filename.ext' or './').\n"
-                "2. Use workspace file tools (e.g., `patch_file` or `write_file`) to write clean, production-ready code directly to disk.\n"
+                "1. If the user requests to create or modify a file (e.g., \"create file html to create template UI\") WITHOUT explicitly providing a directory path, automatically default the file path to the Root Directory (`./`).\n"
+                "2. Use workspace file tools (e.g., `write_file`) to write clean, production-ready code directly to disk.\n"
                 "3. STRICTLY PROHIBITED: Do not write useless/trash code, boilerplate placeholder comments (e.g., // TODO), or unnecessary explanations inside the generated file."
             )
         else:
@@ -90,6 +90,9 @@ class IDEAgent:
 ==================================================
 CURRENT DETECTED ENVIRONMENT CONTEXT:
 - Environment Status: {env_status}
+==================================================
+[EXECUTION INSTRUCTION]
+Always analyze the current Environment Context (Has Repo, Is Roblox Studio) BEFORE deciding whether to execute disk tools, return code blocks in chat, or route commands through Roblox MCP.
 ==================================================
 STRICT OPERATIONAL RULES FOR THIS ENVIRONMENT:
 {env_instruction}

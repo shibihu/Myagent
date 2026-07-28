@@ -86,14 +86,14 @@ class ChatAgent:
         elif has_repo:
             env_status = "WORKSPACE WITH CLONED REPOSITORY (Repository Present)"
             env_instruction = (
-                "1. If the user requests to create or modify a file WITHOUT explicitly providing a directory path, automatically default the file path to the Root Directory (e.g., './filename.ext' or './').\n"
-                "2. Use workspace file tools (e.g., `write_file` or `patch_file`) to write clean, production-ready code directly to disk.\n"
+                "1. If the user requests to create or modify a file (e.g., \"create file html to create template UI\") WITHOUT explicitly providing a directory path, automatically default the file path to the Root Directory (`./`).\n"
+                "2. Use workspace file tools (e.g., `write_file`) to write clean, production-ready code directly to disk.\n"
                 "3. STRICTLY PROHIBITED: Do not write useless/trash code, boilerplate placeholder comments (e.g., // TODO), or unnecessary explanations inside the generated file."
             )
         else:
             env_status = "NO REPOSITORY (Empty Workspace / Standalone Chat)"
             env_instruction = (
-                "1. Do NOT attempt to invoke disk writing tools or create files on the system (e.g. write_file, patch_file, execute_command to write files).\n"
+                "1. Do NOT attempt to invoke disk writing tools or create files on the system (e.g., write_file, patch_file, execute_command to write files).\n"
                 "2. Output the complete, fully functional code directly inside the chat as a clean Markdown code block so the user can easily review and copy it."
             )
 
@@ -102,6 +102,9 @@ class ChatAgent:
             "==================================================\n"
             f"CURRENT DETECTED ENVIRONMENT CONTEXT:\n"
             f"- Environment Status: {env_status}\n"
+            "==================================================\n"
+            "[EXECUTION INSTRUCTION]\n"
+            "Always analyze the current Environment Context (Has Repo, Is Roblox Studio) BEFORE deciding whether to execute disk tools, return code blocks in chat, or route commands through Roblox MCP.\n"
             "==================================================\n"
             "STRICT OPERATIONAL RULES FOR THIS ENVIRONMENT:\n"
             f"{env_instruction}\n"
