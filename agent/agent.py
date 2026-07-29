@@ -154,7 +154,7 @@ class ChatAgent:
                         "properties": {
                             "filepath": {
                                 "type": "string",
-                                "description": "The relative path to the file inside the workspace."
+                                "description": "The relative path to the file inside the workspace. If no directory is specified, default to root directory './' (e.g., 'test.py')."
                             }
                         },
                         "required": ["filepath"]
@@ -171,11 +171,11 @@ class ChatAgent:
                         "properties": {
                             "filepath": {
                                 "type": "string",
-                                "description": "The relative path to the file inside the workspace."
+                                "description": "The relative path to the file inside the workspace. If no directory is specified, default to root directory './' (e.g., 'index.html')."
                             },
                             "content": {
                                 "type": "string",
-                                "description": "The complete text content to write into the file."
+                                "description": "The complete text content to write into the file. MUST be clean, production-ready code. Boilerplate comment placeholders (e.g. // TODO) and explanation commentary inside the file are STRICTLY PROHIBITED."
                             }
                         },
                         "required": ["filepath", "content"]
@@ -209,7 +209,7 @@ class ChatAgent:
                         "properties": {
                             "filepath": {
                                 "type": "string",
-                                "description": "The relative path to the file to patch."
+                                "description": "The relative path to the file to patch. If no directory is specified, default to root directory './' (e.g., 'app.py')."
                             },
                             "search_block": {
                                 "type": "string",
@@ -217,7 +217,7 @@ class ChatAgent:
                             },
                             "replace_block": {
                                 "type": "string",
-                                "description": "The block of code to replace it with."
+                                "description": "The block of code to replace it with. MUST be clean, production-ready code. Boilerplate comment placeholders (e.g. // TODO) are STRICTLY PROHIBITED."
                             }
                         },
                         "required": ["filepath", "search_block", "replace_block"]
@@ -315,6 +315,13 @@ class ChatAgent:
                 }
             }
         ]
+
+        # Filter tools_schema based on repository state to strictly adhere to Rule 2 (No Repository -> No disk-writing/execution tools)
+        if not has_repo:
+            tools_schema = [
+                t for t in tools_schema
+                if t["function"]["name"] not in ["write_file", "patch_file", "execute_command"]
+            ]
 
         # Map tool names to Python functions
         def execute_local_tool(name: str, args: dict) -> dict:

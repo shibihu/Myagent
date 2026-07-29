@@ -38,7 +38,14 @@ def ensure_workspace():
 def clean_path(filepath: str) -> str:
     """Resolve path and ensure it remains inside the workspace directory for basic path containment."""
     ws = ensure_workspace()
-    absolute_path = os.path.abspath(os.path.join(ws, filepath))
+
+    # Strip any leading slashes or relative directory prefixes to safely default to root './'
+    cleaned = filepath.lstrip("/\\")
+    if cleaned.startswith("./") or cleaned.startswith(".\\"):
+        cleaned = cleaned[2:]
+    cleaned = cleaned.lstrip("/\\")
+
+    absolute_path = os.path.abspath(os.path.join(ws, cleaned))
     if not absolute_path.startswith(ws):
         raise ValueError("Directory traversal attempt detected.")
     return absolute_path
