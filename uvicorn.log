@@ -8,3 +8,9 @@ INFO:     127.0.0.1:52828 - "GET / HTTP/1.1" 200 OK
 INFO:     127.0.0.1:52828 - "GET /auth/me HTTP/1.1" 200 OK
 INFO:     127.0.0.1:52828 - "GET /api/ide/files HTTP/1.1" 200 OK
 INFO:     127.0.0.1:46306 - "GET /chats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53058 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53058 - "GET /api/git/changes HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:53068 - "GET /auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53082 - "GET /api/ide/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53088 - "GET /chats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45548 - "GET /api/git/changes HTTP/1.1" 404 Not Found

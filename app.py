@@ -787,6 +787,21 @@ async def api_github_clone(req: GitHubCloneRequest):
                             with open(target_path, "wb") as f:
                                 f.write(z.read(member))
 
+        # Initialize a local git repository so change tracking (git status) works perfectly
+        import shutil
+        import subprocess
+        if shutil.which("git") is not None:
+            try:
+                subprocess.run("git init", shell=True, cwd=WORKSPACE_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                subprocess.run(f"git remote add origin {repo_url}", shell=True, cwd=WORKSPACE_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                # To prevent git status from showing all initial files as untracked, we can commit them locally as clean baseline
+                subprocess.run("git config user.name 'MyAgent Bot'", shell=True, cwd=WORKSPACE_DIR)
+                subprocess.run("git config user.email 'myagent@bot.local'", shell=True, cwd=WORKSPACE_DIR)
+                subprocess.run("git add .", shell=True, cwd=WORKSPACE_DIR)
+                subprocess.run("git commit -m 'Initial baseline commit'", shell=True, cwd=WORKSPACE_DIR)
+            except Exception as e:
+                print(f"[Git Init Baseline Exception]: {e}")
+
         # Save GitHub Configuration for REST Git tools fallback
         import json
         config_data = {
@@ -838,6 +853,140 @@ async def api_ide_files():
         return {"status": "success", "files": sorted(files_list)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/git/changes")
+async def api_git_changes():
+    """Runs git status --porcelain and returns structured file change indicators."""
+    from agent.tools import WORKSPACE_DIR, ensure_workspace
+    import subprocess
+    import shutil
+
+    ensure_workspace()
+    if not os.path.exists(os.path.join(WORKSPACE_DIR, ".git")):
+        return {"status": "success", "changes": {}}
+
+    try:
+        if shutil.which("git") is None:
+            return {"status": "success", "changes": {}}
+
+        process = subprocess.run(
+            "git status --porcelain",
+            shell=True,
+            cwd=WORKSPACE_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        changes = {}
+        if process.returncode == 0:
+            lines = process.stdout.splitlines()
+            for line in lines:
+                if len(line) > 3:
+                    status = line[:2].strip()
+                    # If empty status, default to 'M'
+                    if not status:
+                        status = 'M'
+                    filepath = line[3:].strip()
+                    # Strip quotes
+                    if filepath.startswith('"') and filepath.endswith('"'):
+                        filepath = filepath[1:-1]
+                    changes[filepath] = status
+
+        return {"status": "success", "changes": changes}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+class GitCommitPushRequest(BaseModel):
+    commit_message: str
+    repo_url: str
+    branch_name: str
+    token: str
+
+@app.post("/api/git/commit-push")
+async def api_git_commit_push(req: GitCommitPushRequest):
+    """Safely stages, commits, and pushes modified project files directly to GitHub with credentials."""
+    from agent.tools import WORKSPACE_DIR, ensure_workspace
+    import subprocess
+    import shutil
+    import os
+    import re
+
+    ensure_workspace()
+
+    if not os.path.exists(os.path.join(WORKSPACE_DIR, ".git")):
+        if shutil.which("git") is not None:
+            try:
+                subprocess.run("git init", shell=True, cwd=WORKSPACE_DIR)
+                subprocess.run(f"git remote add origin {req.repo_url}", shell=True, cwd=WORKSPACE_DIR)
+            except Exception as e:
+                return {"status": "error", "message": f"Failed to initialize git repository: {str(e)}"}
+        else:
+            return {"status": "error", "message": "Git CLI tool not found on the system."}
+
+    try:
+        # Check changes to commit
+        status_process = subprocess.run(
+            "git status --porcelain",
+            shell=True,
+            cwd=WORKSPACE_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        if status_process.returncode != 0:
+            return {"status": "error", "message": f"Failed to check git status: {status_process.stderr}"}
+
+        changes = status_process.stdout.strip()
+
+        # Set credentials temporarily
+        subprocess.run("git config user.name 'MyAgent Bot'", shell=True, cwd=WORKSPACE_DIR)
+        subprocess.run("git config user.email 'myagent@bot.local'", shell=True, cwd=WORKSPACE_DIR)
+
+        # Stage and commit
+        subprocess.run("git add .", shell=True, cwd=WORKSPACE_DIR)
+
+        if changes:
+            subprocess.run(
+                f'git commit -m "{req.commit_message}"',
+                shell=True,
+                cwd=WORKSPACE_DIR,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+
+        # Parse repository URL and inject token
+        repo_url_clean = req.repo_url.strip()
+        if repo_url_clean.startswith("https://"):
+            repo_url_clean = repo_url_clean[len("https://"):]
+        elif repo_url_clean.startswith("http://"):
+            repo_url_clean = repo_url_clean[len("http://"):]
+
+        authenticated_url = f"https://{req.token.strip()}@{repo_url_clean}"
+
+        # Execute push
+        push_cmd = f"git push {authenticated_url} {req.branch_name}"
+        push_process = subprocess.run(
+            push_cmd,
+            shell=True,
+            cwd=WORKSPACE_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=45
+        )
+
+        if push_process.returncode == 0:
+            return {"status": "success", "message": "Successfully committed and pushed changes to GitHub."}
+        else:
+            err_msg = push_process.stderr or "Unknown push error."
+            # Mask token in case it was printed in the git push error traceback
+            err_msg_masked = re.sub(r'https://[^@]+@', 'https://***@', err_msg)
+            return {"status": "error", "message": f"Git Push Error: {err_msg_masked}"}
+
+    except Exception as e:
+        return {"status": "error", "message": f"Fatal exception during git push execution: {str(e)}"}
 
 @app.get("/api/ide/file")
 async def api_ide_get_file(path: str):
