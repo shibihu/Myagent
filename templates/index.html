@@ -143,6 +143,18 @@
             const [mobileView, setMobileView] = useState("editor"); // "explorer", "editor", "chat"
             const [showMobileMenu, setShowMobileMenu] = useState(false);
 
+            // Persistent Script Saving & Git State
+            const [dirtyTabs, setDirtyTabs] = useState([]);
+            const [gitChanges, setGitChanges] = useState({}); // filepath -> status ('M', 'A', 'D', etc)
+            const autosaveTimeoutRef = useRef(null);
+
+            // Git credentials and push panel state
+            const [commitMessage, setCommitMessage] = useState("");
+            const [gitRepoUrl, setGitRepoUrl] = useState("");
+            const [gitBranchName, setGitBranchName] = useState("main");
+            const [gitPat, setGitPat] = useState("");
+            const [gitLoading, setGitLoading] = useState(false);
+
             // Chat & Sessions
             const [chatSessions, setChatSessions] = useState([]);
             const [currentChatId, setCurrentChatId] = useState(null);
@@ -208,13 +220,22 @@
                 }
             };
 
-            // Initialize Supabase & Auth
+            // Initialize Supabase, Auth, and periodic Git Change Fetcher
             useEffect(() => {
                 const handleResize = () => {
                     setIsMobile(window.innerWidth < 768);
                 };
                 handleResize();
                 window.addEventListener("resize", handleResize);
+
+                // Restore saved git settings
+                setGitRepoUrl(localStorage.getItem("myagent_git_repo_url") || "");
+                setGitBranchName(localStorage.getItem("myagent_git_branch_name") || "main");
+                setGitPat(localStorage.getItem("myagent_git_pat") || "");
+
+                // Periodically fetch git changes
+                fetchGitChanges();
+                const gitInterval = setInterval(fetchGitChanges, 10000);
 
                 const sUrl = window.NEXT_PUBLIC_SUPABASE_URL;
                 const sKey = window.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -297,6 +318,7 @@
 
                 return () => {
                     window.removeEventListener("resize", handleResize);
+                    clearInterval(gitInterval);
                 };
             }, []);
 
@@ -343,6 +365,38 @@
                 };
             }, [editorRef]);
 
+            // Track editor content changes for dirty indicator and autosaving
+            useEffect(() => {
+                if (!editorInstance) return;
+
+                const disposable = editorInstance.onDidChangeModelContent(() => {
+                    if (!activeTab) return;
+
+                    // Mark current tab as dirty
+                    setDirtyTabs(prev => {
+                        if (!prev.includes(activeTab)) {
+                            return [...prev, activeTab];
+                        }
+                        return prev;
+                    });
+
+                    // Debounce autosave
+                    if (autosaveTimeoutRef.current) {
+                        clearTimeout(autosaveTimeoutRef.current);
+                    }
+                    autosaveTimeoutRef.current = setTimeout(() => {
+                        handleAutosave(activeTab);
+                    }, 1500);
+                });
+
+                return () => {
+                    disposable.dispose();
+                    if (autosaveTimeoutRef.current) {
+                        clearTimeout(autosaveTimeoutRef.current);
+                    }
+                };
+            }, [editorInstance, activeTab]);
+
             // Handle switching files (activeTab)
             useEffect(() => {
                 if (!editorInstance || !monacoInstance || !activeTab) return;
@@ -358,6 +412,11 @@
                             );
                             editorInstance.setModel(model);
                             setStatusText(`Opened: ${activeTab}`);
+
+                            // Safe clear dirty state for freshly opened file after model render
+                            setTimeout(() => {
+                                setDirtyTabs(prev => prev.filter(t => t !== activeTab));
+                            }, 50);
                         } else {
                             triggerToast(`Failed to open file: ${activeTab}`, "error");
                         }
@@ -387,6 +446,49 @@
                     });
             };
 
+            // Fetch git change detection info
+            const fetchGitChanges = () => {
+                fetch('/api/git/changes')
+                    .then(res => res.ok ? res.json() : null)
+                    .then(data => {
+                        if (data && data.status === "success") {
+                            setGitChanges(data.changes || {});
+                        }
+                    })
+                    .catch(err => console.error("Failed to fetch git changes:", err));
+            };
+
+            const saveFileImmediately = (filepath, content) => {
+                if (autosaveTimeoutRef.current) {
+                    clearTimeout(autosaveTimeoutRef.current);
+                }
+                return fetch('/api/ide/file', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filepath, content })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === "success") {
+                        setDirtyTabs(prev => prev.filter(t => t !== filepath));
+                        fetchGitChanges(); // Refresh git status automatically
+                        fetchFilesList(); // Refresh files tree in case of additions
+                        return true;
+                    }
+                    return false;
+                })
+                .catch(err => {
+                    console.error("Save failed:", err);
+                    return false;
+                });
+            };
+
+            const handleAutosave = (filepath) => {
+                if (!editorInstance) return;
+                const content = editorInstance.getValue();
+                saveFileImmediately(filepath, content);
+            };
+
             // Manual Ctrl+S save
             const handleManualSave = (editor) => {
                 if (!activeTab) {
@@ -394,21 +496,12 @@
                     return;
                 }
                 const content = editor.getValue();
-                fetch('/api/ide/file', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ filepath: activeTab, content })
-                })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.status === "success") {
+                saveFileImmediately(activeTab, content).then(success => {
+                    if (success) {
                         triggerToast(`Saved ${activeTab} successfully`, "success");
                     } else {
                         triggerToast(`Failed to save file`, "error");
                     }
-                })
-                .catch(() => {
-                    triggerToast(`Failed to save file`, "error");
                 });
             };
 
@@ -577,6 +670,11 @@
 
             // Switch to a file and open tab
             const handleSelectFile = (path) => {
+                // Save previous active tab if dirty
+                if (activeTab && dirtyTabs.includes(activeTab) && editorInstance) {
+                    saveFileImmediately(activeTab, editorInstance.getValue());
+                }
+
                 if (!openTabs.includes(path)) {
                     setOpenTabs([...openTabs, path]);
                 }
@@ -585,6 +683,12 @@
 
             const handleCloseTab = (e, path) => {
                 e.stopPropagation();
+
+                // Save if dirty
+                if (path === activeTab && dirtyTabs.includes(path) && editorInstance) {
+                    saveFileImmediately(path, editorInstance.getValue());
+                }
+
                 const index = openTabs.indexOf(path);
                 const filtered = openTabs.filter(t => t !== path);
                 setOpenTabs(filtered);
@@ -595,6 +699,48 @@
                         setActiveTab(null);
                     }
                 }
+            };
+
+            const handleCommitPush = () => {
+                if (!commitMessage.trim()) {
+                    triggerToast("Please enter a commit message", "error");
+                    return;
+                }
+                if (!gitRepoUrl.trim()) {
+                    triggerToast("Please enter GitHub Repository URL", "error");
+                    return;
+                }
+                if (!gitPat.trim()) {
+                    triggerToast("Please enter GitHub Personal Access Token (PAT)", "error");
+                    return;
+                }
+
+                setGitLoading(true);
+                fetch('/api/git/commit-push', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        commit_message: commitMessage,
+                        repo_url: gitRepoUrl,
+                        branch_name: gitBranchName,
+                        token: gitPat
+                    })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    setGitLoading(false);
+                    if (data.status === "success") {
+                        triggerToast("Successfully committed and pushed changes to GitHub!", "success");
+                        setCommitMessage(""); // Clear commit message box
+                        fetchGitChanges(); // Refresh changes list
+                    } else {
+                        triggerToast(data.message || "Failed to commit and push", "error");
+                    }
+                })
+                .catch(err => {
+                    setGitLoading(false);
+                    triggerToast("Connection error during commit & push", "error");
+                });
             };
 
             // Delete chat session
@@ -851,12 +997,35 @@
                                                         <i class="fa-solid fa-chevron-down text-[10px]"></i>
                                                         <span>WORKSPACE-ROOT</span>
                                                     </div>
-                                                    {files.map(f => (
-                                                        <button key={f} onClick={() => { handleSelectFile(f); if (isMobile) setMobileView("editor"); }} class={`w-full text-left px-4 py-1.5 rounded text-xs hover:bg-panelBg hover:text-white transition-colors flex items-center space-x-2 ${activeTab === f ? 'bg-panelBg text-white border-l-2 border-brandBlue' : 'text-gray-400'}`}>
-                                                            <i class={`fa-solid ${f.endsWith('.py') ? 'fa-brands fa-python text-yellow-500' : f.endsWith('.luau') ? 'fa-solid fa-gem text-blue-400' : 'fa-solid fa-file-code text-brandBlue'}`}></i>
-                                                            <span class="truncate">{f}</span>
-                                                        </button>
-                                                    ))}
+                                                    {files.map(f => {
+                                                        const gitStatus = gitChanges[f];
+                                                        let badgeColor = "";
+                                                        let badgeLabel = "";
+                                                        if (gitStatus === "M") {
+                                                            badgeColor = "text-amber-500 font-bold text-[10px]";
+                                                            badgeLabel = "M";
+                                                        } else if (gitStatus === "A" || gitStatus === "??" || gitStatus === "U") {
+                                                            badgeColor = "text-green-500 font-bold text-[10px]";
+                                                            badgeLabel = gitStatus === "??" ? "U" : "A";
+                                                        } else if (gitStatus === "D") {
+                                                            badgeColor = "text-red-500 font-bold text-[10px]";
+                                                            badgeLabel = "D";
+                                                        }
+
+                                                        return (
+                                                            <button key={f} onClick={() => { handleSelectFile(f); if (isMobile) setMobileView("editor"); }} class={`w-full text-left px-4 py-1.5 rounded text-xs hover:bg-panelBg hover:text-white transition-colors flex items-center justify-between ${activeTab === f ? 'bg-panelBg text-white border-l-2 border-brandBlue' : 'text-gray-400'}`}>
+                                                                <div class="flex items-center space-x-2 truncate">
+                                                                    <i class={`fa-solid ${f.endsWith('.py') ? 'fa-brands fa-python text-yellow-500' : f.endsWith('.luau') ? 'fa-solid fa-gem text-blue-400' : 'fa-solid fa-file-code text-brandBlue'}`}></i>
+                                                                    <span class="truncate">{f}</span>
+                                                                </div>
+                                                                {badgeLabel && (
+                                                                    <span class={`${badgeColor} px-1.5`} title={gitStatus === "M" ? "Modified" : "Untracked/Added"}>
+                                                                        {badgeLabel}
+                                                                    </span>
+                                                                )}
+                                                            </button>
+                                                        );
+                                                    })}
                                                 </div>
                                             )}
                                         </div>
@@ -897,7 +1066,119 @@
                                         </div>
                                     )}
 
-                                    {activeSidebar !== "explorer" && activeSidebar !== "chats" && (
+                                    {activeSidebar === "git" && (
+                                        <div class="space-y-4 p-2 text-xs">
+                                            {/* Changes Section */}
+                                            <div>
+                                                <div class="text-[10px] font-bold text-textMuted uppercase mb-2 tracking-wider">Workspace Changes</div>
+                                                {Object.keys(gitChanges).length === 0 ? (
+                                                    <div class="text-center py-6 text-textMuted italic text-gray-500">No changes detected in workspace.</div>
+                                                ) : (
+                                                    <div class="space-y-1.5 max-h-40 overflow-y-auto border border-borderCol rounded bg-black/20 p-1.5">
+                                                        {Object.entries(gitChanges).map(([file, status]) => {
+                                                            let badgeText = status;
+                                                            let badgeColor = "bg-amber-500/10 text-amber-400 border border-amber-500/20";
+                                                            if (status === "M") {
+                                                                badgeText = "Modified";
+                                                                badgeColor = "bg-amber-500/10 text-amber-400 border border-amber-500/20";
+                                                            } else if (status === "A" || status === "??" || status === "U") {
+                                                                badgeText = status === "??" ? "Untracked" : "Added";
+                                                                badgeColor = "bg-green-500/10 text-green-400 border border-green-500/20";
+                                                            } else if (status === "D") {
+                                                                badgeText = "Deleted";
+                                                                badgeColor = "bg-red-500/10 text-red-400 border border-red-500/20";
+                                                            }
+                                                            return (
+                                                                <div key={file} class="flex items-center justify-between text-gray-300">
+                                                                    <span class="truncate max-w-[130px]" title={file}>{file}</span>
+                                                                    <span class={`px-1.5 py-0.5 rounded text-[9px] font-bold ${badgeColor}`}>{badgeText}</span>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div class="border-t border-borderCol my-3"></div>
+
+                                            {/* Commit & Push Settings */}
+                                            <div class="space-y-3">
+                                                <div class="text-[10px] font-bold text-textMuted uppercase tracking-wider">Source Control & Sync</div>
+
+                                                <div class="space-y-1">
+                                                    <label class="text-[10px] text-textMuted font-semibold">Commit Message</label>
+                                                    <textarea
+                                                        value={commitMessage}
+                                                        onChange={(e) => setCommitMessage(e.target.value)}
+                                                        placeholder="Write commit message..."
+                                                        class="w-full bg-panelBg border border-borderCol rounded p-2 text-xs focus:outline-none focus:border-brandBlue text-white h-16 resize-none"
+                                                    />
+                                                </div>
+
+                                                <div class="space-y-1">
+                                                    <label class="text-[10px] text-textMuted font-semibold">GitHub Repository URL</label>
+                                                    <input
+                                                        type="text"
+                                                        value={gitRepoUrl}
+                                                        onChange={(e) => {
+                                                            setGitRepoUrl(e.target.value);
+                                                            localStorage.setItem("myagent_git_repo_url", e.target.value);
+                                                        }}
+                                                        placeholder="https://github.com/user/repo.git"
+                                                        class="w-full bg-panelBg border border-borderCol rounded p-1.5 text-xs focus:outline-none focus:border-brandBlue text-white"
+                                                    />
+                                                </div>
+
+                                                <div class="space-y-1">
+                                                    <label class="text-[10px] text-textMuted font-semibold">Target Branch</label>
+                                                    <input
+                                                        type="text"
+                                                        value={gitBranchName}
+                                                        onChange={(e) => {
+                                                            setGitBranchName(e.target.value);
+                                                            localStorage.setItem("myagent_git_branch_name", e.target.value);
+                                                        }}
+                                                        placeholder="main"
+                                                        class="w-full bg-panelBg border border-borderCol rounded p-1.5 text-xs focus:outline-none focus:border-brandBlue text-white"
+                                                    />
+                                                </div>
+
+                                                <div class="space-y-1">
+                                                    <label class="text-[10px] text-textMuted font-semibold">GitHub Personal Access Token (PAT)</label>
+                                                    <input
+                                                        type="password"
+                                                        value={gitPat}
+                                                        onChange={(e) => {
+                                                            setGitPat(e.target.value);
+                                                            localStorage.setItem("myagent_git_pat", e.target.value);
+                                                        }}
+                                                        placeholder="ghp_xxxxxxxxxxxx"
+                                                        class="w-full bg-panelBg border border-borderCol rounded p-1.5 text-xs focus:outline-none focus:border-brandBlue text-white font-mono"
+                                                    />
+                                                </div>
+
+                                                <button
+                                                    onClick={handleCommitPush}
+                                                    disabled={gitLoading || Object.keys(gitChanges).length === 0}
+                                                    class={`w-full font-bold py-2 px-4 rounded text-xs transition-colors flex items-center justify-center space-x-1.5 shadow-md ${gitLoading ? 'bg-gray-600 text-gray-400' : 'bg-green-600 hover:bg-green-500 text-white'}`}
+                                                >
+                                                    {gitLoading ? (
+                                                        <>
+                                                            <i class="fa-solid fa-circle-notch animate-spin"></i>
+                                                            <span>Syncing to GitHub...</span>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <i class="fa-solid fa-cloud-arrow-up"></i>
+                                                            <span>Commit & Push Changes</span>
+                                                        </>
+                                                    )}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {activeSidebar !== "explorer" && activeSidebar !== "chats" && activeSidebar !== "git" && (
                                         <div class="text-xs text-textMuted text-center py-12">This tab function is fully simulated inside this prototype environment.</div>
                                     )}
                                 </div>
@@ -912,17 +1193,25 @@
                                     {openTabs.map(tab => (
                                         <div key={tab} onClick={() => setActiveTab(tab)} class={`h-full px-4 border-r border-borderCol flex items-center space-x-2 text-xs cursor-pointer transition-colors flex-shrink-0 ${activeTab === tab ? 'bg-[#1e1e1e] text-white font-medium border-t-2 border-brandBlue' : 'bg-[#18181c]/50 text-gray-500 hover:text-gray-300'}`}>
                                             <i class="fa-solid fa-code text-[11px]"></i>
-                                            <span>{tab}</span>
+                                            <span>{tab}{dirtyTabs.includes(tab) && <span class="text-amber-400 ml-1 font-bold">•</span>}</span>
                                             <button onClick={(e) => handleCloseTab(e, tab)} class="hover:bg-gray-700/50 hover:text-white rounded-full p-0.5 text-[9px]"><i class="fa-solid fa-xmark"></i></button>
                                         </div>
                                     ))}
                                 </div>
 
                                 {/* Path Breadcrumbs Bar */}
-                                <div class="h-7 bg-[#1e1e1e] border-b border-borderCol flex items-center px-4 text-[10px] text-textMuted space-x-2 flex-shrink-0">
-                                    <span class="uppercase font-bold text-[9px] tracking-wider text-gray-500">LUAU-PROJECT</span>
-                                    <i class="fa-solid fa-chevron-right text-[8px] text-gray-600"></i>
-                                    <span class="truncate">{activeTab || "No file opened"}</span>
+                                <div class="h-7 bg-[#1e1e1e] border-b border-borderCol flex items-center justify-between px-4 text-[10px] text-textMuted flex-shrink-0">
+                                    <div class="flex items-center space-x-2">
+                                        <span class="uppercase font-bold text-[9px] tracking-wider text-gray-500">LUAU-PROJECT</span>
+                                        <i class="fa-solid fa-chevron-right text-[8px] text-gray-600"></i>
+                                        <span class="truncate">{activeTab || "No file opened"}{activeTab && dirtyTabs.includes(activeTab) && <span class="text-amber-400 ml-1 font-bold">(modified)</span>}</span>
+                                    </div>
+                                    {activeTab && (
+                                        <button onClick={() => { if (editorInstance) handleManualSave(editorInstance); }} class="bg-surfaceBg hover:bg-gray-700 text-gray-300 hover:text-white px-2 py-0.5 rounded border border-borderCol transition-colors flex items-center space-x-1 text-[9px]">
+                                            <i class={`fa-solid ${dirtyTabs.includes(activeTab) ? 'fa-floppy-disk text-amber-400 animate-pulse' : 'fa-check text-green-400'}`}></i>
+                                            <span>Save</span>
+                                        </button>
+                                    )}
                                 </div>
 
                                 {/* Main Editor Surface */}

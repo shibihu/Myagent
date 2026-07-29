@@ -449,5 +449,85 @@ class AppTests(unittest.TestCase):
             self.assertIn("ROBLOX STUDIO CONNECTION (Active Studio Session)", system_msg)
             self.assertIn("Utilize available Roblox MCP tools", system_msg)
 
+    def test_git_changes_endpoint(self):
+        """Test git status changes tracking endpoint."""
+        # 1. When no git repo exists, should return empty changes
+        if os.path.exists(os.path.join(WORKSPACE_DIR, ".git")):
+            shutil.rmtree(os.path.join(WORKSPACE_DIR, ".git"))
+        response = self.client.get("/api/git/changes")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "success")
+        self.assertEqual(response.json()["changes"], {})
+
+        # 2. Mock git porcelain output
+        with patch("subprocess.run") as mock_run:
+            import subprocess
+            os.makedirs(os.path.join(WORKSPACE_DIR, ".git"), exist_ok=True)
+            mock_run.return_value = subprocess.CompletedProcess(
+                args="git status --porcelain",
+                returncode=0,
+                stdout=" M main.py\n?? test.py\n D deleted.py\n",
+                stderr=""
+            )
+            response = self.client.get("/api/git/changes")
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data["status"], "success")
+            self.assertEqual(data["changes"]["main.py"], "M")
+            self.assertEqual(data["changes"]["test.py"], "??")
+            self.assertEqual(data["changes"]["deleted.py"], "D")
+
+    def test_git_commit_push_endpoint(self):
+        """Test secure git commit and push changes endpoint."""
+        payload = {
+            "commit_message": "feat: test message",
+            "repo_url": "https://github.com/shibihu/Myagent.git",
+            "branch_name": "main",
+            "token": "ghp_mock_token_123"
+        }
+
+        # Mock subprocess run to simulate successful push
+        with patch("subprocess.run") as mock_run:
+            import subprocess
+            os.makedirs(os.path.join(WORKSPACE_DIR, ".git"), exist_ok=True)
+
+            # Mock successful git push command (git push status returns 0)
+            mock_run.return_value = subprocess.CompletedProcess(
+                args="git push",
+                returncode=0,
+                stdout="Everything up-to-date",
+                stderr=""
+            )
+
+            response = self.client.post("/api/git/commit-push", json=payload)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "success")
+
+        # Mock push failure and verify token masking
+        with patch("subprocess.run") as mock_run:
+            import subprocess
+            def mock_run_impl(cmd, *args, **kwargs):
+                if "status" in cmd or "porcelain" in cmd:
+                    return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=" M main.py", stderr="")
+                elif "push" in cmd:
+                    return subprocess.CompletedProcess(
+                        args=cmd,
+                        returncode=128,
+                        stdout="",
+                        stderr="fatal: Authentication failed for 'https://ghp_mock_token_123@github.com/shibihu/Myagent.git/'"
+                    )
+                else:
+                    return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+            mock_run.side_effect = mock_run_impl
+            response = self.client.post("/api/git/commit-push", json=payload)
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data["status"], "error")
+            self.assertIn("Git Push Error", data["message"])
+            # The token MUST be masked
+            self.assertNotIn("ghp_mock_token_123", data["message"])
+            self.assertIn("https://***@", data["message"])
+
 if __name__ == "__main__":
     unittest.main()
