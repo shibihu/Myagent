@@ -925,6 +925,13 @@ async def api_git_commit_push(req: GitCommitPushRequest):
             return {"status": "error", "message": "Git CLI tool not found on the system."}
 
     try:
+        # Set credentials temporarily
+        subprocess.run("git config user.name 'MyAgent Bot'", shell=True, cwd=WORKSPACE_DIR)
+        subprocess.run("git config user.email 'myagent@bot.local'", shell=True, cwd=WORKSPACE_DIR)
+
+        # Ensure correct branch is checked out/created locally first to prevent refspec mismatch issues
+        subprocess.run(f"git checkout -B {req.branch_name}", shell=True, cwd=WORKSPACE_DIR)
+
         # Check changes to commit
         status_process = subprocess.run(
             "git status --porcelain",
@@ -938,10 +945,6 @@ async def api_git_commit_push(req: GitCommitPushRequest):
             return {"status": "error", "message": f"Failed to check git status: {status_process.stderr}"}
 
         changes = status_process.stdout.strip()
-
-        # Set credentials temporarily
-        subprocess.run("git config user.name 'MyAgent Bot'", shell=True, cwd=WORKSPACE_DIR)
-        subprocess.run("git config user.email 'myagent@bot.local'", shell=True, cwd=WORKSPACE_DIR)
 
         # Stage and commit
         subprocess.run("git add .", shell=True, cwd=WORKSPACE_DIR)

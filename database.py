@@ -265,8 +265,12 @@ class LocalFirstDatabaseHelper:
 
                     messages = []
                     for r, c in msg_rows:
+                        role = str(r)
+                        # Translate 'assistant' back to 'ai' to keep chat histories fully uniform
+                        if role == "assistant":
+                            role = "ai"
                         messages.append({
-                            "role": str(r),
+                            "role": role,
                             "content": str(c),
                             "model": None,
                             "total_tokens": 0
@@ -300,9 +304,13 @@ class LocalFirstDatabaseHelper:
 
                     for idx, msg in enumerate(messages):
                         msg_id = f"{chat_id}_{idx}"
+                        role = msg.get("role")
+                        # Translate 'ai' role to 'assistant' to satisfy database constraint check list
+                        if role == "ai":
+                            role = "assistant"
                         db.execute(
                             text("INSERT INTO chat_messages (id, chat_id, role, content) VALUES (:mid, :cid, :role, :content)"),
-                            {"mid": msg_id, "cid": chat_id, "role": msg.get("role"), "content": msg.get("content")}
+                            {"mid": msg_id, "cid": chat_id, "role": role, "content": msg.get("content")}
                         )
                     db.commit()
                 finally:
