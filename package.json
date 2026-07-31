@@ -1,6 +1,10 @@
 {
   "name": "myagent-app",
   "version": "1.0.0",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
   "dependencies": {
     "@capacitor/android": "^6.2.1",
     "@capacitor/cli": "^6.0.0",
@@ -10,8 +14,7 @@
     "xterm-addon-fit": "^0.8.0"
   },
   "devDependencies": {
-    "electron": "^43.2.0",
-    "electron-builder": "^26.15.3",
-    "supabase": "^2.109.1"
+    "electron": "^28.2.0",
+    "electron-builder": "^24.9.1"
   }
 }

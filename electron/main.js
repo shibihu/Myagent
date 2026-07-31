@@ -1,40 +1,80 @@
-const { app, BrowserWindow } = require('electron');
-const { spawn } = require('child_process');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
+const os = require('os');
+const pty = require('node-pty');
 
 let mainWindow;
-let pythonProcess;
+let ptyProcess;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1300,
-    height: 850,
+    width: 1200,
+    height: 800,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true
     }
   });
 
-  // 1. สั่งรัน FastAPI Server (app.py) ในเครื่อง
-  // (ช่วง Dev สามารถรัน python app.py หรือ uvicorn ตรงๆ ได้)
-  pythonProcess = spawn('python', ['app.py']);
-
-  pythonProcess.stdout.on('data', (data) => {
-    console.log(`Python Backend: ${data}`);
+  // Load the running FastAPI web application
+  const port = process.env.PORT || 8000;
+  mainWindow.loadURL(`http://localhost:${port}`).catch(() => {
+    // Fallback if local FastAPI server is not started on default port yet
+    mainWindow.loadURL(`http://127.0.0.1:8000`).catch((err) => {
+      console.error('Failed to load FastAPI server URL:', err);
+    });
   });
 
-  // 2. ให้ Electron โหลดหน้าเว็บจาก FastAPI Local Server (เช่น http://127.0.0.1:8000)
-  // หรือถ้าทำ Frontend แยกไว้ ให้ดึงไฟล์ static HTML มาเปิด
-  setTimeout(() => {
-    mainWindow.loadURL('http://127.0.0.1:8000'); // URL ของ FastAPI บนเครื่อง
-  }, 2000); // รอให้ Python Server เริ่มทำงานประมาณ 2 วิ
+  mainWindow.on('closed', function () {
+    mainWindow = null;
+  });
 }
 
-// เมื่อปิดแอป Electron ให้ทำการฆ่า Process ของ Python เบื้องหลังด้วย
-app.on('will-quit', () => {
-  if (pythonProcess) {
-    pythonProcess.kill();
+function setupPty() {
+  const shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
+
+  // Set default directory to workspace if exists, otherwise home dir
+  const workspaceDir = process.env.WORKSPACE_DIR || path.join(__dirname, '..', 'workspace');
+
+  ptyProcess = pty.spawn(shell, [], {
+    name: 'xterm-color',
+    cols: 80,
+    rows: 24,
+    cwd: workspaceDir,
+    env: process.env
+  });
+
+  // Listen for output from the terminal and send it to the renderer process
+  ptyProcess.onData((data) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('terminal-incoming-data', data);
+    }
+  });
+}
+
+app.whenReady().then(() => {
+  setupPty();
+  createWindow();
+
+  app.on('activate', function () {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+
+app.on('window-all-closed', function () {
+  if (process.platform !== 'darwin') app.quit();
+});
+
+// IPC handlers to connect renderer with the node-pty process
+ipcMain.on('terminal-write', (event, data) => {
+  if (ptyProcess) {
+    ptyProcess.write(data);
   }
 });
 
-app.whenReady().then(createWindow);
+ipcMain.on('terminal-resize', (event, { cols, rows }) => {
+  if (ptyProcess) {
+    ptyProcess.resize(cols, rows);
+  }
+});

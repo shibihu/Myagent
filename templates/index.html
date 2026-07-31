@@ -37,6 +37,10 @@
     <script src="https://cdn.jsdelivr.net/npm/@monaco-editor/loader@1.4.0/lib/umd/monaco-loader.min.js"></script>
     <!-- Supabase JS Client -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- Xterm.js for real terminal emulation -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <link rel="manifest" href="/manifest.json">
     <style>
@@ -130,6 +134,129 @@
     <script type="text/babel">
     {% raw %}
         const { useState, useEffect, useRef } = React;
+
+        const XtermTerminal = () => {
+            const terminalRef = useRef(null);
+            const xtermInstance = useRef(null);
+            const fitAddonInstance = useRef(null);
+
+            useEffect(() => {
+                if (!terminalRef.current) return;
+
+                // Initialize Xterm.js Terminal
+                const term = new Terminal({
+                    cursorBlink: true,
+                    fontSize: 12,
+                    fontFamily: 'Courier New, monospace',
+                    theme: {
+                        background: '#18181c',
+                        foreground: '#ffffff'
+                    }
+                });
+                xtermInstance.current = term;
+
+                const fitAddon = new FitAddon.FitAddon();
+                fitAddonInstance.current = fitAddon;
+                term.loadAddon(fitAddon);
+
+                term.open(terminalRef.current);
+                // Delay fit slightly to let DOM render completely
+                setTimeout(() => {
+                    try {
+                        fitAddon.fit();
+                    } catch (e) {
+                        console.warn("FitAddon.fit failed initially:", e);
+                    }
+                }, 100);
+
+                // Check if Electron context is active
+                if (window.terminalAPI) {
+                    term.onData(data => {
+                        window.terminalAPI.sendData(data);
+                    });
+
+                    window.terminalAPI.onData(data => {
+                        term.write(data);
+                    });
+
+                    // Notify main process of initial size
+                    setTimeout(() => {
+                        try {
+                            const dims = fitAddon.proposeDimensions();
+                            if (dims) {
+                                window.terminalAPI.resize(dims.cols, dims.rows);
+                            }
+                        } catch (e) {
+                            console.error(e);
+                        }
+                    }, 200);
+
+                    // Resize handler
+                    const handleResize = () => {
+                        try {
+                            fitAddon.fit();
+                            const resizedDims = fitAddon.proposeDimensions();
+                            if (resizedDims) {
+                                window.terminalAPI.resize(resizedDims.cols, resizedDims.rows);
+                            }
+                        } catch (e) {
+                            console.error(e);
+                        }
+                    };
+                    window.addEventListener('resize', handleResize);
+
+                    return () => {
+                        window.removeEventListener('resize', handleResize);
+                        term.dispose();
+                    };
+                } else {
+                    // Fallback interactive command terminal in web browser mode
+                    term.writeln('\x1b[1;36m[MyAgent Web Console Mode]\x1b[0m');
+                    term.writeln('Real terminal access requires running inside Electron container.');
+                    term.writeln('Running simple web command fallback shell...\r\n');
+                    term.write('$ ');
+
+                    let currentLine = '';
+
+                    term.onData(data => {
+                        const code = data.charCodeAt(0);
+                        if (code === 13) { // Enter
+                            term.write('\r\n');
+                            if (currentLine.trim()) {
+                                term.writeln(`Executing mock command: ${currentLine}`);
+                                term.writeln('Output: Command execution simulated in web sandbox.');
+                            }
+                            currentLine = '';
+                            term.write('$ ');
+                        } else if (code === 127) { // Backspace
+                            if (currentLine.length > 0) {
+                                currentLine = currentLine.slice(0, -1);
+                                term.write('\b \b');
+                            }
+                        } else {
+                            currentLine += data;
+                            term.write(data);
+                        }
+                    });
+
+                    const handleResize = () => {
+                        try {
+                            fitAddon.fit();
+                        } catch (e) {
+                            console.warn("FitAddon.fit failed on resize:", e);
+                        }
+                    };
+                    window.addEventListener('resize', handleResize);
+
+                    return () => {
+                        window.removeEventListener('resize', handleResize);
+                        term.dispose();
+                    };
+                }
+            }, []);
+
+            return <div ref={terminalRef} className="w-full h-full bg-[#18181c] overflow-hidden" style={{ minHeight: '120px' }} />;
+        };
 
         function App() {
             // Layout & Selection state
@@ -1271,15 +1398,9 @@
                                             <span>Ready</span>
                                         </div>
                                     </div>
-                                    <div class="flex-1 p-3 overflow-y-auto font-mono text-[11px] text-gray-300 space-y-1">
+                                    <div class={`flex-1 overflow-hidden font-mono text-[11px] text-gray-300 ${bottomTab === 'terminal' ? '' : 'p-3 overflow-y-auto space-y-1'}`}>
                                         {bottomTab === "terminal" && (
-                                            <div>
-                                                <div class="text-textMuted">[09:21:45] [INFO] Loaded mobile workspace configuration.</div>
-                                                <div class="text-brandBlue flex items-center space-x-2">
-                                                    <span>$</span>
-                                                    <input type="text" placeholder="Run command..." class="bg-transparent border-none outline-none text-white text-xs flex-1" />
-                                                </div>
-                                            </div>
+                                            <XtermTerminal />
                                         )}
                                         {bottomTab === "output" && (
                                             <div class="text-green-400">Compiled scripts successfully.</div>
