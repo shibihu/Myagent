@@ -131,7 +131,7 @@
 
     <script>
         // Inject server variables
-        window.BACKEND_API_URL = "";
+        window.BACKEND_API_URL = ""; 
         window.NEXT_PUBLIC_API_URL = "{{ NEXT_PUBLIC_API_URL }}";
         window.NEXT_PUBLIC_SUPABASE_URL = "{{ NEXT_PUBLIC_SUPABASE_URL }}";
         window.NEXT_PUBLIC_SUPABASE_ANON_KEY = "{{ NEXT_PUBLIC_SUPABASE_ANON_KEY }}";
@@ -276,12 +276,12 @@
             const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
             const [mobileView, setMobileView] = useState("editor"); // "explorer", "editor", "chat"
             const [showMobileMenu, setShowMobileMenu] = useState(false);
-
+            
             // Persistent Script Saving & Git State
             const [dirtyTabs, setDirtyTabs] = useState([]);
             const [gitChanges, setGitChanges] = useState({}); // filepath -> status ('M', 'A', 'D', etc)
             const autosaveTimeoutRef = useRef(null);
-
+            
             // Git credentials and push panel state
             const [commitMessage, setCommitMessage] = useState("");
             const [gitRepoUrl, setGitRepoUrl] = useState("");
@@ -301,7 +301,7 @@
             const [workflowSteps, setWorkflowSteps] = useState([]);
             const [isWorkflowExpanded, setIsWorkflowExpanded] = useState(true);
             const [isWorkflowCompleted, setIsWorkflowCompleted] = useState(false);
-
+            
             // Memory & MCP States
             const [memoryFacts, setMemoryFacts] = useState([]);
             const [showMemoryDrawer, setShowMemoryDrawer] = useState(false);
@@ -314,7 +314,7 @@
 
             // Suggested Code Fix & Diff
             const [suggestedFix, setSuggestedFix] = useState(null); // { original: "", replacement: "", filepath: "" }
-
+            
             // Auth session
             const [userSession, setUserSession] = useState(null);
             const [authLoading, setAuthLoading] = useState(true);
@@ -435,7 +435,7 @@
                 // Load files listing and chat sessions
                 fetchFilesList();
                 fetchChatSessions();
-
+                
                 // Restoring active chat from local storage
                 try {
                     const savedHistory = localStorage.getItem("myagent_chat_history");
@@ -459,7 +459,7 @@
             // Setup Monaco Editor inside editorRef container
             useEffect(() => {
                 if (!editorRef.current) return;
-
+                
                 monaco_loader.init().then(monaco => {
                     setMonacoInstance(monaco);
 
@@ -546,7 +546,7 @@
                             );
                             editorInstance.setModel(model);
                             setStatusText(`Opened: ${activeTab}`);
-
+                            
                             // Safe clear dirty state for freshly opened file after model render
                             setTimeout(() => {
                                 setDirtyTabs(prev => prev.filter(t => t !== activeTab));
@@ -744,7 +744,7 @@
                         setMessages(finalHistory);
                         localStorage.setItem("myagent_chat_history", JSON.stringify(finalHistory));
                     }
-
+                    
                     setIsTyping(false);
                     fetchChatSessions();
                 } catch (err) {
@@ -771,7 +771,7 @@
                     editorInstance.setValue(updatedCode);
                     setSuggestedFix(null);
                     triggerToast("Code changes applied successfully!", "success");
-
+                    
                     // Auto-save the applied code changes
                     handleManualSave(editorInstance);
                 } else {
@@ -817,7 +817,7 @@
 
             const handleCloseTab = (e, path) => {
                 e.stopPropagation();
-
+                
                 // Save if dirty
                 if (path === activeTab && dirtyTabs.includes(path) && editorInstance) {
                     saveFileImmediately(path, editorInstance.getValue());
@@ -1145,7 +1145,7 @@
                                                             badgeColor = "text-red-500 font-bold text-[10px]";
                                                             badgeLabel = "D";
                                                         }
-
+                                                        
                                                         return (
                                                             <button key={f} onClick={() => { handleSelectFile(f); if (isMobile) setMobileView("editor"); }} class={`w-full text-left px-4 py-1.5 rounded text-xs hover:bg-panelBg hover:text-white transition-colors flex items-center justify-between ${activeTab === f ? 'bg-panelBg text-white border-l-2 border-brandBlue' : 'text-gray-400'}`}>
                                                                 <div class="flex items-center space-x-2 truncate">
@@ -1238,61 +1238,61 @@
                                             {/* Commit & Push Settings */}
                                             <div class="space-y-3">
                                                 <div class="text-[10px] font-bold text-textMuted uppercase tracking-wider">Source Control & Sync</div>
-
+                                                
                                                 <div class="space-y-1">
                                                     <label class="text-[10px] text-textMuted font-semibold">Commit Message</label>
-                                                    <textarea
-                                                        value={commitMessage}
-                                                        onChange={(e) => setCommitMessage(e.target.value)}
-                                                        placeholder="Write commit message..."
+                                                    <textarea 
+                                                        value={commitMessage} 
+                                                        onChange={(e) => setCommitMessage(e.target.value)} 
+                                                        placeholder="Write commit message..." 
                                                         class="w-full bg-panelBg border border-borderCol rounded p-2 text-xs focus:outline-none focus:border-brandBlue text-white h-16 resize-none"
                                                     />
                                                 </div>
 
                                                 <div class="space-y-1">
                                                     <label class="text-[10px] text-textMuted font-semibold">GitHub Repository URL</label>
-                                                    <input
-                                                        type="text"
-                                                        value={gitRepoUrl}
+                                                    <input 
+                                                        type="text" 
+                                                        value={gitRepoUrl} 
                                                         onChange={(e) => {
                                                             setGitRepoUrl(e.target.value);
                                                             localStorage.setItem("myagent_git_repo_url", e.target.value);
-                                                        }}
-                                                        placeholder="https://github.com/user/repo.git"
+                                                        }} 
+                                                        placeholder="https://github.com/user/repo.git" 
                                                         class="w-full bg-panelBg border border-borderCol rounded p-1.5 text-xs focus:outline-none focus:border-brandBlue text-white"
                                                     />
                                                 </div>
 
                                                 <div class="space-y-1">
                                                     <label class="text-[10px] text-textMuted font-semibold">Target Branch</label>
-                                                    <input
-                                                        type="text"
-                                                        value={gitBranchName}
+                                                    <input 
+                                                        type="text" 
+                                                        value={gitBranchName} 
                                                         onChange={(e) => {
                                                             setGitBranchName(e.target.value);
                                                             localStorage.setItem("myagent_git_branch_name", e.target.value);
-                                                        }}
-                                                        placeholder="main"
+                                                        }} 
+                                                        placeholder="main" 
                                                         class="w-full bg-panelBg border border-borderCol rounded p-1.5 text-xs focus:outline-none focus:border-brandBlue text-white"
                                                     />
                                                 </div>
 
                                                 <div class="space-y-1">
                                                     <label class="text-[10px] text-textMuted font-semibold">GitHub Personal Access Token (PAT)</label>
-                                                    <input
-                                                        type="password"
-                                                        value={gitPat}
+                                                    <input 
+                                                        type="password" 
+                                                        value={gitPat} 
                                                         onChange={(e) => {
                                                             setGitPat(e.target.value);
                                                             localStorage.setItem("myagent_git_pat", e.target.value);
-                                                        }}
-                                                        placeholder="ghp_xxxxxxxxxxxx"
+                                                        }} 
+                                                        placeholder="ghp_xxxxxxxxxxxx" 
                                                         class="w-full bg-panelBg border border-borderCol rounded p-1.5 text-xs focus:outline-none focus:border-brandBlue text-white font-mono"
                                                     />
                                                 </div>
 
-                                                <button
-                                                    onClick={handleCommitPush}
+                                                <button 
+                                                    onClick={handleCommitPush} 
                                                     disabled={gitLoading || Object.keys(gitChanges).length === 0}
                                                     class={`w-full font-bold py-2 px-4 rounded text-xs transition-colors flex items-center justify-center space-x-1.5 shadow-md ${gitLoading ? 'bg-gray-600 text-gray-400' : 'bg-green-600 hover:bg-green-500 text-white'}`}
                                                 >
