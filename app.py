@@ -6,6 +6,22 @@ import asyncio
 import httpx
 from typing import Optional, List
 import io
+from dotenv import load_dotenv
+
+# โหลด .env จาก root directory ก่อนทุกอย่าง
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env.example"))
+
+# ตรวจสอบ keys ตอน startup
+_key_status = {
+    "GROQ_API_KEY":       "✅ loaded" if os.getenv("GROQ_API_KEY") else "❌ missing",
+    "GEMINI_API_KEY":     "✅ loaded" if os.getenv("GEMINI_API_KEY") else "❌ missing",
+    "OPENAI_API_KEY":     "✅ loaded" if os.getenv("OPENAI_API_KEY") else "❌ missing",
+    "OPENROUTER_API_KEY": "✅ loaded" if os.getenv("OPENROUTER_API_KEY") else "❌ missing",
+}
+print("\n🔑 [MyAgent] API Key Status:")
+for k, v in _key_status.items():
+    print(f"   {v}  {k}")
+print()
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Form, File, UploadFile, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -355,7 +371,7 @@ async def chat_endpoint(
         chat_id = None
         search_web = False
         files_to_process = []
-        
+
         if "multipart/form-data" in content_type:
             form_data = await request.form()
             message = form_data.get("message", "")
