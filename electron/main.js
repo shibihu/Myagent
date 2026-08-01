@@ -17,13 +17,9 @@ function createWindow() {
     }
   });
 
-  // Load the running FastAPI web application
-  const port = process.env.PORT || 8000;
-  mainWindow.loadURL(`http://localhost:${port}`).catch(() => {
-    // Fallback if local FastAPI server is not started on default port yet
-    mainWindow.loadURL(`http://127.0.0.1:8000`).catch((err) => {
-      console.error('Failed to load FastAPI server URL:', err);
-    });
+  // Load the running FastAPI web application (Render cloud endpoint)
+  mainWindow.loadURL(`https://myagent-807h.onrender.com`).catch((err) => {
+    console.error('Failed to load Render web application URL:', err);
   });
 
   mainWindow.on('closed', function () {
