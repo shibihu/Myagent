@@ -3,8 +3,7 @@
   "version": "1.0.0",
   "main": "electron/main.js",
   "scripts": {
-    "start": "electron .",
-    "build": "electron-builder"
+    "start": "electron ."
   },
   "dependencies": {
     "@capacitor/android": "^6.2.1",
