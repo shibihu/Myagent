@@ -58,8 +58,10 @@ function createWindow() {
     }
   });
 
-  // เรียกใช้วงรอบ Retry เพื่อโหลด URL อย่างปลอดภัย
-  loadWindowWithRetry();
+  // Load the running FastAPI web application (Render cloud endpoint)
+  mainWindow.loadURL(`https://myagent-807h.onrender.com`).catch((err) => {
+    console.error('Failed to load Render web application URL:', err);
+  });
 
   mainWindow.on('closed', function () {
     mainWindow = null;
