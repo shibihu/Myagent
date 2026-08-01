@@ -9,6 +9,6 @@ node_modules/
 # Local JSON Databases (ประวัติแชทและความจำ)
 chats.json
 memory.json
-
+dist
 
 
