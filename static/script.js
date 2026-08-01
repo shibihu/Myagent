@@ -503,14 +503,15 @@ async function simulateStreamingMessage(textBodyElement, fullText, model = null,
 
 function createMessageLayout(role) {
     const rowDiv = document.createElement("div");
-    rowDiv.className = `message-row ${role === "user" ? "user-row" : "ai-row"}`;
+    const isUser = (role === "user" || role === "system");
+    rowDiv.className = `message-row ${isUser ? "user-row" : "ai-row"}`;
     const contentDiv = document.createElement("div");
     contentDiv.className = "message-content";
     const avatarDiv = document.createElement("div");
     avatarDiv.className = "avatar";
-    avatarDiv.textContent = role === "user" ? "U" : "A";
+    avatarDiv.textContent = isUser ? "U" : "A";
     const textBody = document.createElement("div");
-    textBody.className = role === "user" ? "text-body" : "text-body markdown-body";
+    textBody.className = isUser ? "text-body" : "text-body markdown-body";
     
     contentDiv.appendChild(avatarDiv);
     contentDiv.appendChild(textBody);
@@ -580,7 +581,8 @@ function setupMessageUtilities(textBody) {
 
 async function renderStaticMessage(role, content, model = null, tokens = 0) {
     const textBody = createMessageLayout(role);
-    if (role === "user") {
+    const isUser = (role === "user" || role === "system");
+    if (isUser) {
         textBody.textContent = content;
     } else {
         textBody.innerHTML = marked.parse(content);
@@ -813,14 +815,91 @@ async function sendMessage() {
 
     toggleTyping(true);
 
+    // Retrieve active Supabase session and access token if client is initialized
+    let hasSupabaseSession = false;
+    let supabaseAccessToken = "";
+    if (window.supabaseInstance) {
+        try {
+            const { data: { session } } = await window.supabaseInstance.auth.getSession();
+            if (session && session.access_token) {
+                hasSupabaseSession = true;
+                supabaseAccessToken = session.access_token;
+
+                // Requirement 1 & 3: Submit prompt to Supabase prompts table (Edge Function or direct client insert)
+                if (window.NEXT_PUBLIC_API_URL) {
+                    try {
+                        const edgeResponse = await fetch(window.NEXT_PUBLIC_API_URL, {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                                "Authorization": `Bearer ${supabaseAccessToken}`
+                            },
+                            body: JSON.stringify({ prompt: text })
+                        });
+                        if (edgeResponse.ok) {
+                            console.log("Successfully inserted prompt to Supabase prompts table via Edge Function API.");
+                        } else {
+                            const errBody = await edgeResponse.json();
+                            console.error("Failed to insert prompt via Edge Function API:", errBody);
+                        }
+                    } catch (err) {
+                        console.error("Exception when calling Edge Function API:", err);
+                    }
+                } else {
+                    // Fallback: Direct Client Insert without non-existent 'prompt' column
+                    const { error: insertError } = await window.supabaseInstance.from('prompts').insert([{
+                        content: text,
+                        user_id: session.user.id
+                    }]);
+                    if (insertError) {
+                        console.error("Error inserting prompt to Supabase prompts table directly:", insertError);
+                    } else {
+                        console.log("Successfully inserted prompt to Supabase prompts table directly.");
+                    }
+                }
+            }
+        } catch (err) {
+            console.error("Error retrieving Supabase session in sendMessage:", err);
+        }
+    }
+
     try {
-        const response = await fetch(`${API_BASE}/chat`, {
-            method: "POST",
-            headers: {
+        let response;
+        const endpoint = `${API_BASE || ""}/chat`;
+
+        if (hasSupabaseSession && selectedFiles.length === 0) {
+            // Send JSON payload directly to our FastAPI backend with Authorization token
+            const headers = {
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+                "Authorization": `Bearer ${supabaseAccessToken}`
+            };
+            const payload = {
+                "prompt": text,
+                "search_web": isWebSearchEnabled
+            };
+            if (currentChatId) {
+                payload["chat_id"] = currentChatId;
+            }
+            response = await fetch(endpoint, {
+                method: "POST",
+                headers: headers,
+                body: JSON.stringify(payload)
+            });
+        } else {
+            // Standard form-data payload with auth header if logged in
+            const headers = {
                 "Accept": "text/event-stream"
-            },
-            body: formData
-        });
+            };
+            if (supabaseAccessToken) {
+                headers["Authorization"] = `Bearer ${supabaseAccessToken}`;
+            }
+            response = await fetch(endpoint, {
+                method: "POST",
+                headers: headers,
+                body: formData
+            });
+        }
 
         toggleTyping(false);
 
@@ -966,7 +1045,18 @@ function showCustomModal({ title, message, showInput = false, defaultValue = "",
 
 async function loadChatHistoryList() {
     try {
+        historyList.innerHTML = `<li class="auth-loading-state" style="padding: 10px 0; justify-content: center; display: flex;"><div class="spinner" style="width:16px; height:16px; border:2px solid rgba(255,255,255,0.2); border-top-color:#58a6ff; border-radius:50%; animation:spin-wheel 1s linear infinite;"></div></li>`;
         const res = await fetch(`${API_BASE}/chats`);
+        if (!res.ok) {
+            console.warn(`Failed to fetch chats history list: HTTP ${res.status}`);
+            historyList.innerHTML = "<li style='padding:10px; color:var(--text-muted); font-size:13px; text-align:center;'>ล้มเหลวในการโหลดรายการแชท</li>";
+            return;
+        }
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+            console.warn("Chats list endpoint did not return JSON payload.");
+            return;
+        }
         const list = await res.json();
         historyList.innerHTML = "";
         
@@ -1039,12 +1129,25 @@ async function loadChatHistoryList() {
 async function switchChatSession(cId) {
     currentChatId = cId;
     chatBox.innerHTML = "";
-    const res = await fetch(`${API_BASE}/chats/${cId}`);
-    const d = await res.json();
-    chatTitle.textContent = d.title;
-    currentChatMessages = d.messages || [];
-    currentChatMessages.forEach(m => renderStaticMessage(m.role, m.content, m.model, m.total_tokens));
-    saveChatToLocalStorage();
+    try {
+        const res = await fetch(`${API_BASE}/chats/${cId}`);
+        if (!res.ok) {
+            console.error(`Failed to fetch chat session ${cId}: HTTP ${res.status}`);
+            return;
+        }
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+            console.error("Chats detail endpoint did not return JSON payload.");
+            return;
+        }
+        const d = await res.json();
+        chatTitle.textContent = d.title;
+        currentChatMessages = d.messages || [];
+        currentChatMessages.forEach(m => renderStaticMessage(m.role, m.content, m.model, m.total_tokens));
+        saveChatToLocalStorage();
+    } catch (err) {
+        console.error("Error inside switchChatSession:", err);
+    }
     loadChatHistoryList();
 }
 
@@ -1071,7 +1174,32 @@ async function deleteChatSession(cId) {
     loadChatHistoryList();
 }
 
-async function loadMemoriesList() { const res = await fetch(`${API_BASE}/memory`); const d = await res.json(); memoryList.innerHTML = d.memories.length === 0 ? "<li>No memory</li>" : ""; d.memories.forEach((f, i) => { const li = document.createElement("li"); li.className = "memory-item"; li.innerHTML = `<span>${f}</span><button class="memory-delete-btn pop-btn" onclick="deleteMemoryFact(${i})">🗑️</button>`; memoryList.appendChild(li); }); }
+async function loadMemoriesList() {
+    try {
+        memoryList.innerHTML = `<li class="auth-loading-state" style="padding: 10px 0; justify-content: center; display: flex;"><div class="spinner" style="width:16px; height:16px; border:2px solid rgba(255,255,255,0.2); border-top-color:#58a6ff; border-radius:50%; animation:spin-wheel 1s linear infinite;"></div></li>`;
+        const res = await fetch(`${API_BASE}/memory`);
+        if (!res.ok) {
+            console.warn(`Failed to fetch memories: HTTP ${res.status}`);
+            memoryList.innerHTML = "<li style='padding:10px; color:var(--text-muted); font-size:13px; text-align:center;'>ล้มเหลวในการโหลดความจำ</li>";
+            return;
+        }
+        const contentType = res.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+            console.warn("Memories endpoint did not return JSON payload.");
+            return;
+        }
+        const d = await res.json();
+        memoryList.innerHTML = d.memories.length === 0 ? "<li>No memory</li>" : "";
+        d.memories.forEach((f, i) => {
+            const li = document.createElement("li");
+            li.className = "memory-item";
+            li.innerHTML = `<span>${f}</span><button class="memory-delete-btn pop-btn" onclick="deleteMemoryFact(${i})">🗑️</button>`;
+            memoryList.appendChild(li);
+        });
+    } catch (e) {
+        console.error("Error in loadMemoriesList:", e);
+    }
+}
 async function deleteMemoryFact(i) { await fetch(`${API_BASE}/memory/${i}`, { method: "DELETE" }); loadMemoriesList(); }
 
 newChatBtn.onclick = () => {
@@ -1109,5 +1237,366 @@ if (window.innerWidth <= 768) {
     openSidebarBtn.classList.remove("hidden");
 }
 
+// Initialize Supabase Client if env variables are available
+let supabaseClient = null;
+let promptsChannel = null; // Active global reference for the prompts Realtime channel
+const supabaseUrl = window.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = window.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+function isValidHttpUrl(string) {
+    if (!string || typeof string !== "string") return false;
+    if (string.includes("{{") || string.includes("}}")) return false;
+    try {
+        const url = new URL(string);
+        return url.protocol === "http:" || url.protocol === "https:";
+    } catch (_) {
+        return false;
+    }
+}
+
+if (isValidHttpUrl(supabaseUrl) && supabaseAnonKey && !supabaseAnonKey.includes("{{") && typeof supabase !== 'undefined') {
+    try {
+        supabaseClient = supabase.createClient(supabaseUrl, supabaseAnonKey);
+        window.supabaseInstance = supabaseClient;
+        console.log("Supabase Client successfully initialized from Edge config.");
+    } catch (err) {
+        console.error("Failed to initialize Supabase Client:", err);
+    }
+} else {
+    console.log("Supabase Client initialization skipped: Invalid URL or missing/template keys.");
+}
+
+// GitHub Authentication Functions using Supabase Client
+async function signInWithGitHub() {
+    if (!supabaseClient) {
+        console.error("Supabase client is not initialized.");
+        return;
+    }
+    try {
+        // Build dynamic origin with a trailing slash to satisfy Supabase Redirect Wildcard matches
+        const redirectUrl = window.location.origin.endsWith('/') ? window.location.origin : (window.location.origin + '/');
+
+        const { data, error } = await supabaseClient.auth.signInWithOAuth({
+            provider: 'github',
+            options: {
+                redirectTo: redirectUrl,
+                queryParams: {
+                    prompt: 'consent'
+                }
+            }
+        });
+        if (error) throw error;
+    } catch (err) {
+        console.error("Supabase sign in with GitHub error:", err);
+        showToast("มีข้อผิดพลาดในการเข้าสู่ระบบด้วย GitHub", "error");
+    }
+}
+
+async function signOut() {
+    if (!supabaseClient) {
+        console.error("Supabase client is not initialized.");
+        return;
+    }
+    try {
+        const { error } = await supabaseClient.auth.signOut();
+        if (error) throw error;
+        showToast("ออกจากระบบ GitHub เรียบร้อยแล้ว", "success");
+        setTimeout(() => {
+            window.location.reload();
+        }, 1000);
+    } catch (err) {
+        console.error("Supabase sign out error:", err);
+        showToast("มีข้อผิดพลาดในการออกจากระบบ", "error");
+    }
+}
+
+// Helper to render message with custom metadata (avatar and name) in real-time timeline
+async function renderStaticMessageWithMetadata(authorName, authorAvatar, promptText) {
+    const rowDiv = document.createElement("div");
+    rowDiv.className = "message-row user-row";
+    const contentDiv = document.createElement("div");
+    contentDiv.className = "message-content";
+
+    const avatarEl = document.createElement("div");
+    avatarEl.className = "avatar";
+    if (authorAvatar) {
+        avatarEl.innerHTML = `<img src="${authorAvatar}" alt="${authorName}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">`;
+    } else {
+        avatarEl.textContent = authorName ? authorName.charAt(0).toUpperCase() : "U";
+    }
+
+    const textBody = document.createElement("div");
+    textBody.className = "text-body";
+
+    const nameLabel = document.createElement("strong");
+    nameLabel.style.display = "block";
+    nameLabel.style.fontSize = "12px";
+    nameLabel.style.color = "var(--text-muted)";
+    nameLabel.style.marginBottom = "4px";
+    nameLabel.textContent = authorName || "GitHub User";
+
+    const contentText = document.createElement("div");
+    contentText.textContent = promptText;
+
+    textBody.appendChild(nameLabel);
+    textBody.appendChild(contentText);
+    contentDiv.appendChild(avatarEl);
+    contentDiv.appendChild(textBody);
+    rowDiv.appendChild(contentDiv);
+    chatBox.appendChild(rowDiv);
+
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+// Fetch all prompts from public.prompts including user metadata
+async function loadAllPromptsFromSupabase() {
+    if (!supabaseClient) return;
+    try {
+        // If we already have active conversational chat messages loaded from localStorage,
+        // let the active conversation take precedence to prevent overwriting
+        if (currentChatMessages && currentChatMessages.length > 0) {
+            console.log("Active chatbot conversation is loaded. Skipping prompts list overwrite.");
+            return;
+        }
+
+        const { data, error } = await supabaseClient
+            .from('prompts')
+            .select('id, content, created_at, user_id, users (username, avatar_url)')
+            .order('created_at', { ascending: true });
+
+        if (error) {
+            console.error("Error fetching prompts from Supabase public.prompts:", error);
+            return;
+        }
+
+        if (data && data.length > 0) {
+            chatBox.innerHTML = "";
+            data.forEach(item => {
+                const authorName = item.users?.username || "GitHub User";
+                const authorAvatar = item.users?.avatar_url || "";
+                const promptText = item.content || "";
+                renderStaticMessageWithMetadata(authorName, authorAvatar, promptText);
+            });
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+    } catch (err) {
+        console.error("Exception in loadAllPromptsFromSupabase:", err);
+    }
+}
+
+// Enable Supabase Realtime subscription on public.prompts table
+function setupPromptsRealtimeSubscription() {
+    if (!supabaseClient) return;
+    try {
+        // Clean up previous channel subscription to prevent duplicate callback additions
+        if (promptsChannel) {
+            try {
+                supabaseClient.removeChannel(promptsChannel);
+                console.log("Cleaned up existing Supabase Realtime channel.");
+            } catch (cleanupErr) {
+                console.warn("Failed to remove previous Realtime channel gracefully:", cleanupErr);
+            }
+            promptsChannel = null;
+        }
+
+        promptsChannel = supabaseClient.channel('schema-db-changes');
+
+        promptsChannel
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'prompts'
+                },
+                async (payload) => {
+                    console.log('Realtime INSERT received on public.prompts:', payload);
+                    const newRow = payload.new;
+                    if (newRow) {
+                        try {
+                            // Avoid double-rendering our own message if we are the sender
+                            const { data: { session } } = await supabaseClient.auth.getSession();
+                            if (session && session.user && session.user.id === newRow.user_id) {
+                                console.log("Skipping realtime rendering of our own inserted prompt to avoid duplicates.");
+                                return;
+                            }
+
+                            const { data: userData, error } = await supabaseClient
+                                .from('users')
+                                .select('username, avatar_url')
+                                .eq('id', newRow.user_id)
+                                .single();
+
+                            const authorName = userData?.username || "GitHub User";
+                            const authorAvatar = userData?.avatar_url || "";
+                            const promptText = newRow.content || "";
+
+                            renderStaticMessageWithMetadata(authorName, authorAvatar, promptText);
+                        } catch (userErr) {
+                            console.error("Error loading user metadata in Realtime callback:", userErr);
+                            renderStaticMessageWithMetadata("GitHub User", "", newRow.content || "");
+                        }
+                    }
+                }
+            )
+            .subscribe();
+
+        console.log("Successfully subscribed to Supabase Realtime prompts table.");
+    } catch (err) {
+        console.error("Failed to enable Supabase Realtime subscription:", err);
+    }
+}
+
+// GitHub User Authentication session handling and element binding
+async function initAuthSession() {
+    const authLoading = document.getElementById("auth-loading");
+    const authGuest = document.getElementById("auth-guest");
+    const authUser = document.getElementById("auth-user");
+    const userAvatar = document.getElementById("user-avatar");
+    const userUsername = document.getElementById("user-username");
+    const userEmail = document.getElementById("user-email");
+    const githubSigninBtn = document.getElementById("github-signin-btn");
+    const logoutBtn = document.getElementById("logout-btn");
+
+    if (!authLoading || !authGuest || !authUser) return;
+
+    // 1. If Supabase Client is initialized, check session state and bind OAuth sign-in / sign-out
+    if (supabaseClient) {
+        if (githubSigninBtn) {
+            // Remove traditional redirection and bind signInWithGitHub
+            githubSigninBtn.removeAttribute("href");
+            githubSigninBtn.style.cursor = "pointer";
+            githubSigninBtn.onclick = async (e) => {
+                e.preventDefault();
+                await signInWithGitHub();
+            };
+        }
+
+        if (logoutBtn) {
+            logoutBtn.onclick = async (e) => {
+                e.preventDefault();
+                await signOut();
+            };
+        }
+
+        // Setup direct session listener for Realtime State Changes
+        supabaseClient.auth.onAuthStateChange(async (event, session) => {
+            console.log("Supabase onAuthStateChange Event:", event);
+            if (session && session.user) {
+                const user = session.user;
+                if (userAvatar) {
+                    userAvatar.src = user.user_metadata?.avatar_url || "https://github.com/identicons/guest.png";
+                }
+                if (userUsername) {
+                    userUsername.textContent = user.user_metadata?.full_name || user.user_metadata?.user_name || "GitHub User";
+                }
+                if (userEmail) {
+                    userEmail.textContent = user.email || "";
+                }
+
+                authLoading.classList.add("hidden");
+                authGuest.classList.add("hidden");
+                authUser.classList.remove("hidden");
+
+                // Fetch database prompts, active chats, and memories on session activation
+                loadAllPromptsFromSupabase();
+                setupPromptsRealtimeSubscription();
+                loadChatHistoryList();
+                if (!memoryDrawer.classList.contains("closed")) {
+                    loadMemoriesList();
+                }
+            } else {
+                authLoading.classList.add("hidden");
+                authUser.classList.add("hidden");
+                authGuest.classList.remove("hidden");
+            }
+        });
+
+        try {
+            const { data: { session }, error } = await supabaseClient.auth.getSession();
+            if (error) throw error;
+            if (session && session.user) {
+                // Initial session already present
+                return;
+            }
+        } catch (err) {
+            console.error("Error retrieving Supabase auth session:", err);
+        }
+    } else {
+        // 2. Fallback: Use backend-managed cookie session check
+        if (githubSigninBtn) {
+            githubSigninBtn.href = `${API_BASE || ""}/auth/github/login`;
+        }
+        if (logoutBtn) {
+            logoutBtn.onclick = async (e) => {
+                e.preventDefault();
+                try {
+                    const response = await fetch(`${API_BASE || ""}/auth/logout`);
+                    if (response.ok || response.redirected) {
+                        showToast("ออกจากระบบ GitHub เรียบร้อยแล้ว", "success");
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 1000);
+                    } else {
+                        showToast("มีข้อผิดพลาดในการออกจากระบบ", "error");
+                    }
+                } catch (err) {
+                    console.error("Logout request failed:", err);
+                    showToast("มีข้อผิดพลาดในการเชื่อมต่อเครือข่าย", "error");
+                }
+            };
+        }
+
+        try {
+            const response = await fetch(`${API_BASE || ""}/auth/me`);
+            if (response.status === 401) {
+                console.log("No active user session (unauthenticated guest).");
+                authLoading.classList.add("hidden");
+                authUser.classList.add("hidden");
+                authGuest.classList.remove("hidden");
+                return;
+            }
+            if (response.ok) {
+                const contentType = response.headers.get("content-type") || "";
+                if (contentType.includes("application/json")) {
+                    const userData = await response.json();
+                    if (userData && userData.authenticated === false) {
+                        console.log("No active user session (unauthenticated guest).");
+                        authLoading.classList.add("hidden");
+                        authUser.classList.add("hidden");
+                        authGuest.classList.remove("hidden");
+                        return;
+                    }
+                    if (userData && (userData.github_id || userData.username)) {
+                        // User is authenticated successfully
+                        if (userAvatar) {
+                            userAvatar.src = userData.avatar_url || "https://github.com/identicons/guest.png";
+                        }
+                        if (userUsername) {
+                            userUsername.textContent = userData.name || userData.username || "GitHub User";
+                        }
+                        if (userEmail) {
+                            userEmail.textContent = userData.email || `@${userData.username || "user"}`;
+                        }
+
+                        authLoading.classList.add("hidden");
+                        authGuest.classList.add("hidden");
+                        authUser.classList.remove("hidden");
+                        return;
+                    }
+                }
+            }
+        } catch (err) {
+            console.log("Silent fallback on guest verification:", err);
+        }
+    }
+
+    // Default: Not authenticated (Guest state)
+    authLoading.classList.add("hidden");
+    authUser.classList.add("hidden");
+    authGuest.classList.remove("hidden");
+}
+
 loadChatHistoryList();
 loadChatFromLocalStorage();
+initAuthSession();

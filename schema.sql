@@ -4,11 +4,21 @@
 CREATE TABLE IF NOT EXISTS chats (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
+    user_id UUID,
     messages JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 2. Table for Long-term Memories Context
+-- 2. Table for Chat Messages individual relational entries
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id TEXT PRIMARY KEY,
+    chat_id TEXT REFERENCES chats(id) ON DELETE CASCADE,
+    role TEXT CHECK (role IN ('user', 'assistant', 'system')),
+    content TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 3. Table for Long-term Memories Context
 CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY,
     facts JSONB DEFAULT '[]'::jsonb,
@@ -19,6 +29,7 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE INDEX IF NOT EXISTS idx_chats_messages ON chats USING gin (messages);
 CREATE INDEX IF NOT EXISTS idx_memories_facts ON memories USING gin (facts);
 CREATE INDEX IF NOT EXISTS idx_chats_created_at ON chats (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_chat_id ON chat_messages (chat_id);
 
 
 -- ==============================================================================
@@ -36,6 +47,7 @@ CREATE INDEX IF NOT EXISTS idx_chats_created_at ON chats (created_at DESC);
 -- these tables, you can safely turn off RLS:
 -- ------------------------------------------------------------------------------
 ALTER TABLE chats DISABLE ROW LEVEL SECURITY;
+ALTER TABLE chat_messages DISABLE ROW LEVEL SECURITY;
 ALTER TABLE memories DISABLE ROW LEVEL SECURITY;
 
 

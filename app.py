@@ -3,6 +3,7 @@ import re
 import uuid
 import json
 import asyncio
+import httpx
 from typing import Optional, List
 import io
 from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Form, File, UploadFile, Header, Depends
@@ -14,6 +15,13 @@ from pydantic import BaseModel
 from agent.agent import ChatAgent
 from agent.ide_agent import IDEAgent
 from pypdf import PdfReader
+
+# Auth Imports
+import agent.auth as auth_mod
+from agent.auth import (
+    create_access_token,
+    get_current_user, get_current_user_or_api_client
+)
 
 # Import database module & helper
 from database import db_helper
@@ -37,6 +45,13 @@ async def verify_api_token(x_api_token: Optional[str] = Header(None, alias="X-AP
         raise HTTPException(status_code=403, detail="Forbidden: Invalid or missing API security token.")
 
 app = FastAPI()
+
+from database import check_db_connection
+
+@app.on_event("startup")
+async def startup_db_check():
+    """Lightweight startup database connectivity check."""
+    check_db_connection()
 
 # Configured CORS Middleware for Localhost, Vercel, and Ngrok Tunnels
 app.add_middleware(
@@ -157,12 +172,16 @@ class ListDirectoryRequest(BaseModel):
 async def index_page(request: Request):
     # Fetch NEXT_PUBLIC_API_URL if configured, so we can inject it dynamically into the index page
     backend_url = os.environ.get("NEXT_PUBLIC_API_URL", "")
+    supabase_url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL", "")
+    supabase_anon_key = os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY", "")
     return templates.TemplateResponse(
         request=request,
         name="index.html",
         context={
             "request": request,
-            "NEXT_PUBLIC_API_URL": backend_url
+            "NEXT_PUBLIC_API_URL": backend_url,
+            "NEXT_PUBLIC_SUPABASE_URL": supabase_url,
+            "NEXT_PUBLIC_SUPABASE_ANON_KEY": supabase_anon_key
         }
     )
 
@@ -179,6 +198,131 @@ async def get_favicon():
         return FileResponse(favicon_path, media_type="image/x-icon")
     raise HTTPException(status_code=404, detail="Favicon not found")
 
+# ==============================================================================
+# GITHUB OAUTH AUTHENTICATION ENDPOINTS
+# ==============================================================================
+
+from fastapi.responses import RedirectResponse
+
+@app.get("/auth/github/login")
+async def github_login():
+    """Redirects user to GitHub's OAuth authorization URL."""
+    # Use dynamic lookup to allow test patching and runtime env modifications
+    client_id = os.environ.get("GITHUB_CLIENT_ID") or auth_mod.GITHUB_CLIENT_ID
+    if not client_id:
+        raise HTTPException(
+            status_code=500,
+            detail="OAuth Configuration Error: GITHUB_CLIENT_ID is not configured in backend environment."
+        )
+    redirect_uri = "https://github.com/login/oauth/authorize"
+    scope = "read:user user:email"
+    return RedirectResponse(
+        url=f"{redirect_uri}?client_id={client_id}&scope={scope}"
+    )
+
+@app.get("/auth/github/callback")
+async def github_callback(code: str):
+    """Receives the authorization code, exchanges it for access_token, and authenticates user."""
+    client_id = os.environ.get("GITHUB_CLIENT_ID") or auth_mod.GITHUB_CLIENT_ID
+    client_secret = os.environ.get("GITHUB_CLIENT_SECRET") or auth_mod.GITHUB_CLIENT_SECRET
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=500,
+            detail="OAuth Configuration Error: GitHub credentials are not configured in backend environment."
+        )
+
+    # 1. Exchange code for access_token
+    token_url = "https://github.com/login/oauth/access_token"
+    headers = {"Accept": "application/json"}
+    payload = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            token_resp = await client.post(token_url, json=payload, headers=headers)
+            if token_resp.status_code != 200:
+                raise HTTPException(status_code=400, detail="Failed to exchange OAuth code with GitHub.")
+
+            token_data = token_resp.json()
+            access_token = token_data.get("access_token")
+            if not access_token:
+                raise HTTPException(status_code=400, detail=f"GitHub OAuth Error: {token_data.get('error_description', 'No access token returned.')}")
+
+            # 2. Retrieve user profile info
+            user_url = "https://api.github.com/user"
+            user_headers = {
+                "Authorization": f"token {access_token}",
+                "User-Agent": "MyAgent-AI-Auth"
+            }
+            user_resp = await client.get(user_url, headers=user_headers)
+            if user_resp.status_code != 200:
+                raise HTTPException(status_code=400, detail="Failed to retrieve user profile from GitHub.")
+
+            user_info = user_resp.json()
+            github_id = user_info.get("id")
+            username = user_info.get("login")
+            avatar_url = user_info.get("avatar_url")
+            email = user_info.get("email")
+
+            # 3. Retrieve user email if not public in profile
+            if not email:
+                emails_url = "https://api.github.com/user/emails"
+                emails_resp = await client.get(emails_url, headers=user_headers)
+                if emails_resp.status_code == 200:
+                    emails_data = emails_resp.json()
+                    for email_entry in emails_data:
+                        if email_entry.get("primary") and email_entry.get("verified"):
+                            email = email_entry.get("email")
+                            break
+
+            # 4. Persistence: save or update user in our database layer
+            user_record = await db_helper.save_or_update_user(
+                github_id=github_id,
+                username=username,
+                email=email,
+                avatar_url=avatar_url
+            )
+
+            # 5. Issue Custom Signed JWT Token
+            jwt_token = create_access_token({"sub": str(github_id), "username": username})
+
+            # 6. Set in secure cookie and redirect back to home page
+            response = RedirectResponse(url="/")
+            response.set_cookie(
+                key="access_token",
+                value=jwt_token,
+                httponly=True,
+                max_age=60 * 60 * 24 * 7,  # 7 days
+                samesite="lax"
+            )
+            return response
+
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=f"Authentication flow encountered fatal error: {str(e)}")
+
+@app.get("/auth/me")
+async def get_me(request: Request):
+    """Protected route to fetch authenticated user profile details, returning 200 OK with authenticated: false if unauthenticated."""
+    try:
+        user = await get_current_user(request)
+        if user:
+            return user
+    except HTTPException:
+        pass
+    return {"authenticated": False, "message": "No active session"}
+
+@app.get("/auth/logout")
+async def logout_user():
+    """Logs out the user by clearing session cookies."""
+    response = RedirectResponse(url="/")
+    response.delete_cookie("access_token")
+    return response
+
 @app.get("/chats")
 async def get_all_chats():
     # Return all chat sessions list
@@ -193,179 +337,205 @@ async def chat_endpoint(
     request: Request,
     background_tasks: BackgroundTasks
 ):
-    content_type = request.headers.get("content-type", "")
-    
-    message = ""
-    chat_id = None
-    search_web = False
-    files_to_process = []
-    
-    if "multipart/form-data" in content_type:
-        form_data = await request.form()
-        message = form_data.get("message", "")
-        chat_id = form_data.get("chat_id")
-        search_web_val = form_data.get("search_web", "false")
-        search_web = search_web_val.lower() == "true"
-        files_to_process = form_data.getlist("files")
-    else:
-        try:
-            json_data = await request.json()
-            message = json_data.get("message", "")
-            chat_id = json_data.get("chat_id")
-            search_web = json_data.get("search_web", False)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid JSON or request payload")
+    try:
+        content_type = request.headers.get("content-type", "")
 
-    files_context = ""
-    for file in files_to_process:
-        filename = file.filename
-        if not filename:
-            continue
-        content_bytes = await file.read()
-        if not content_bytes:
-            continue
-        ext = os.path.splitext(filename)[1].lower()
-        
-        if ext == ".txt":
-            try:
-                text_data = content_bytes.decode("utf-8", errors="ignore")
-                files_context += f"\n--- Start of File: {filename} ---\n{text_data}\n--- End of File: {filename} ---\n"
-            except Exception as e:
-                files_context += f"\n[Error parsing TXT File {filename}: {str(e)}]\n"
-        elif ext == ".pdf":
-            try:
-                pdf_file = io.BytesIO(content_bytes)
-                reader = PdfReader(pdf_file)
-                pdf_text = ""
-                for page in reader.pages:
-                    t = page.extract_text()
-                    if t:
-                        pdf_text += t + "\n"
-                files_context += f"\n--- Start of PDF File: {filename} ---\n{pdf_text}\n--- End of PDF File: {filename} ---\n"
-            except Exception as e:
-                files_context += f"\n[Error parsing PDF File {filename}: {str(e)}]\n"
-        elif ext in [".jpg", ".jpeg", ".png"]:
-            size_kb = len(content_bytes) / 1024
-            files_context += f"\n[Attached Image File: {filename} (Size: {size_kb:.2f} KB)]\n"
+        # Analyze Environment Context for Roblox Studio active connection
+        is_roblox = False
+        user_agent = request.headers.get("user-agent", "").lower()
+        if "roblox" in user_agent:
+            is_roblox = True
         else:
-            files_context += f"\n[Attached File: {filename} (Size: {len(content_bytes)} bytes)]\n"
-
-    memories_facts = await db_helper.get_memories()
-    
-    cid = chat_id
-    current_chat = await db_helper.get_chat_history(cid) if cid else None
-
-    if not cid or not current_chat or not current_chat.get("messages"):
-        cid = str(uuid.uuid4()) if not cid else cid
-        t_msg = message if message else (files_to_process[0].filename if files_to_process else "New Chat")
-        title = t_msg[:15] + "..." if len(t_msg) > 15 else t_msg
-        messages = []
-    else:
-        title = current_chat["title"]
-        messages = current_chat["messages"]
-
-    display_message = message
-    if files_to_process:
-        file_names = ", ".join([f"📎 {f.filename}" for f in files_to_process if f.filename])
-        if display_message:
-            display_message += f"\n\n({file_names})"
-        else:
-            display_message = file_names
-
-    messages.append({
-        "role": "user",
-        "content": display_message,
-        "model": None,
-        "total_tokens": 0
-    })
-
-    # Save user message to database temporarily before getting reply
-    await db_helper.save_chat_history(cid, title, messages)
-
-    agent_message = message
-    if files_context:
-        agent_message = f"{files_context}\n\nUser Message: {message}"
-
-    injected_message = agent_message
-    if memories_facts:
-        memory_context = "\n".join([f"- {f}" for f in memories_facts])
-        injected_message = f"[ข้อมูลความจำถาวรเกี่ยวกับผู้ใช้:\n{memory_context}]\n\nคำสั่งปัจจุบัน: {agent_message}"
-    
-    accept_header = request.headers.get("accept", "")
-
-    # Slicing Window: slice history to only send last 10 messages for optimized token usage
-    sliding_history = messages[-10:] if len(messages) > 10 else messages
-
-    if "text/event-stream" in accept_header:
-        from fastapi.responses import StreamingResponse
-
-        async def event_generator():
-            queue = asyncio.Queue()
-
-            async def status_cb(msg: str):
-                await queue.put({"type": "status", "message": msg})
-
-            async def run_agent_task():
-                try:
-                    res = await agent.get_response(injected_message, history=sliding_history, status_callback=status_cb)
-
-                    # Add result to messages history chain and save
-                    messages.append({
-                        "role": "ai",
-                        "content": res["reply"],
-                        "model": res["model"],
-                        "total_tokens": res["total_tokens"]
-                    })
-                    await db_helper.save_chat_history(cid, title, messages)
-
-                    # Extract memory in background
-                    background_tasks.add_task(extract_and_save_memory, message, res["reply"])
-
-                    # Send final event
-                    await queue.put({
-                        "type": "final",
-                        "chat_id": cid,
-                        "title": title,
-                        "reply": res["reply"],
-                        "model": res["model"],
-                        "total_tokens": res["total_tokens"]
-                    })
-                except Exception as e:
-                    await queue.put({"type": "error", "message": str(e)})
-                finally:
-                    await queue.put(None)
-
-            # Spawn agent runner task
-            asyncio.create_task(run_agent_task())
-
-            while True:
-                item = await queue.get()
-                if item is None:
+            for k, v in request.headers.items():
+                if "roblox" in k.lower() or "roblox" in v.lower():
+                    is_roblox = True
                     break
-                yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
 
-        return StreamingResponse(event_generator(), media_type="text/event-stream")
+        message = ""
+        chat_id = None
+        search_web = False
+        files_to_process = []
+        
+        if "multipart/form-data" in content_type:
+            form_data = await request.form()
+            message = form_data.get("message", "")
+            chat_id = form_data.get("chat_id")
+            search_web_val = form_data.get("search_web", "false")
+            search_web = search_web_val.lower() == "true"
+            files_to_process = form_data.getlist("files")
+        else:
+            try:
+                json_data = await request.json()
+                message = json_data.get("message", "")
+                if not message and "prompt" in json_data:
+                    message = json_data.get("prompt", "")
+                chat_id = json_data.get("chat_id")
+                search_web = json_data.get("search_web", False)
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid JSON or request payload")
 
-    # Standard JSON fallback for backward compatibility / tests
-    result = await agent.get_response(injected_message, history=sliding_history)
+        files_context = ""
+        for file in files_to_process:
+            filename = file.filename
+            if not filename:
+                continue
+            content_bytes = await file.read()
+            if not content_bytes:
+                continue
+            ext = os.path.splitext(filename)[1].lower()
 
-    messages.append({
-        "role": "ai",
-        "content": result["reply"],
-        "model": result["model"],
-        "total_tokens": result["total_tokens"]
-    })
+            if ext == ".txt":
+                try:
+                    text_data = content_bytes.decode("utf-8", errors="ignore")
+                    files_context += f"\n--- Start of File: {filename} ---\n{text_data}\n--- End of File: {filename} ---\n"
+                except Exception as e:
+                    files_context += f"\n[Error parsing TXT File {filename}: {str(e)}]\n"
+            elif ext == ".pdf":
+                try:
+                    pdf_file = io.BytesIO(content_bytes)
+                    reader = PdfReader(pdf_file)
+                    pdf_text = ""
+                    for page in reader.pages:
+                        t = page.extract_text()
+                        if t:
+                            pdf_text += t + "\n"
+                    files_context += f"\n--- Start of PDF File: {filename} ---\n{pdf_text}\n--- End of PDF File: {filename} ---\n"
+                except Exception as e:
+                    files_context += f"\n[Error parsing PDF File {filename}: {str(e)}]\n"
+            elif ext in [".jpg", ".jpeg", ".png"]:
+                size_kb = len(content_bytes) / 1024
+                files_context += f"\n[Attached Image File: {filename} (Size: {size_kb:.2f} KB)]\n"
+            else:
+                files_context += f"\n[Attached File: {filename} (Size: {len(content_bytes)} bytes)]\n"
 
-    await db_helper.save_chat_history(cid, title, messages)
-    background_tasks.add_task(extract_and_save_memory, message, result["reply"])
-    
-    return {
-        "chat_id": cid,
-        "title": title,
-        "reply": result["reply"],
-        "model": result["model"],
-        "total_tokens": result["total_tokens"]
-    }
+        memories_facts = await db_helper.get_memories()
+
+        cid = chat_id
+        current_chat = await db_helper.get_chat_history(cid) if cid else None
+
+        if not cid or not current_chat or not current_chat.get("messages"):
+            cid = str(uuid.uuid4()) if not cid else cid
+            t_msg = message if message else (files_to_process[0].filename if files_to_process else "New Chat")
+            title = t_msg[:15] + "..." if len(t_msg) > 15 else t_msg
+            messages = []
+        else:
+            title = current_chat["title"]
+            messages = current_chat["messages"]
+
+        display_message = message
+        if files_to_process:
+            file_names = ", ".join([f"📎 {f.filename}" for f in files_to_process if f.filename])
+            if display_message:
+                display_message += f"\n\n({file_names})"
+            else:
+                display_message = file_names
+
+        messages.append({
+            "role": "user",
+            "content": display_message,
+            "model": None,
+            "total_tokens": 0
+        })
+
+        # Save user message to database temporarily before getting reply
+        await db_helper.save_chat_history(cid, title, messages)
+
+        agent_message = message
+        if files_context:
+            agent_message = f"{files_context}\n\nUser Message: {message}"
+
+        injected_message = agent_message
+        if memories_facts:
+            memory_context = "\n".join([f"- {f}" for f in memories_facts])
+            injected_message = f"[ข้อมูลความจำถาวรเกี่ยวกับผู้ใช้:\n{memory_context}]\n\nคำสั่งปัจจุบัน: {agent_message}"
+
+        accept_header = request.headers.get("accept", "")
+
+        # Slicing Window: slice history to only send last 10 messages for optimized token usage
+        sliding_history = messages[-10:] if len(messages) > 10 else messages
+
+        if "text/event-stream" in accept_header:
+            from fastapi.responses import StreamingResponse
+
+            async def event_generator():
+                queue = asyncio.Queue()
+
+                async def status_cb(msg: str):
+                    await queue.put({"type": "status", "message": msg})
+
+                async def run_agent_task():
+                    try:
+                        res = await agent.get_response(injected_message, history=sliding_history, status_callback=status_cb, is_roblox=is_roblox)
+
+                        # Add result to messages history chain and save
+                        messages.append({
+                            "role": "ai",
+                            "content": res["reply"],
+                            "model": res["model"],
+                            "total_tokens": res["total_tokens"]
+                        })
+                        await db_helper.save_chat_history(cid, title, messages)
+
+                        # Extract memory in background
+                        background_tasks.add_task(extract_and_save_memory, message, res["reply"])
+
+                        # Send final event
+                        await queue.put({
+                            "type": "final",
+                            "chat_id": cid,
+                            "title": title,
+                            "reply": res["reply"],
+                            "model": res["model"],
+                            "total_tokens": res["total_tokens"]
+                        })
+                    except Exception as e:
+                        await queue.put({"type": "error", "message": str(e)})
+                    finally:
+                        await queue.put(None)
+
+                # Spawn agent runner task
+                asyncio.create_task(run_agent_task())
+
+                while True:
+                    item = await queue.get()
+                    if item is None:
+                        break
+                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+
+            return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+        # Standard JSON fallback for backward compatibility / tests
+        result = await agent.get_response(injected_message, history=sliding_history, is_roblox=is_roblox)
+
+        messages.append({
+            "role": "ai",
+            "content": result["reply"],
+            "model": result["model"],
+            "total_tokens": result["total_tokens"]
+        })
+
+        await db_helper.save_chat_history(cid, title, messages)
+        background_tasks.add_task(extract_and_save_memory, message, result["reply"])
+
+        return {
+            "chat_id": cid,
+            "title": title,
+            "reply": result["reply"],
+            "model": result["model"],
+            "total_tokens": result["total_tokens"]
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        accept_header = request.headers.get("accept", "")
+        if "text/event-stream" in accept_header:
+            from fastapi.responses import StreamingResponse
+            async def error_generator():
+                err_data = {"type": "error", "message": f"Server Error: {str(e)}"}
+                yield f"data: {json.dumps(err_data, ensure_ascii=False)}\n\n"
+            return StreamingResponse(error_generator(), media_type="text/event-stream")
+        else:
+            raise HTTPException(status_code=500, detail=f"Server Internal Error: {str(e)}")
 
 @app.delete("/chats/{chat_id}")
 async def delete_chat_session(chat_id: str):
@@ -536,18 +706,306 @@ async def save_mcp_config_endpoint(req: MCPConfigRequest):
 
 @app.post("/api/github/clone")
 async def api_github_clone(req: GitHubCloneRequest):
-    """Clones a selected repository into the workspace, supporting authenticated private repositories if token is provided."""
+    """Clones a selected repository into the workspace using GitHub REST API zipball to support serverless environments."""
     try:
-        from agent.tools import clone_repository_tool
+        import httpx
+        import zipfile
+        import io
+        import shutil
+        from agent.tools import WORKSPACE_DIR, ensure_workspace
+
         repo_url = req.repo_url
 
-        if req.token:
-            # Inject token into URL for authenticated cloning: https://<token>@github.com/...
-            match = re.match(r"https://(github\.com/.*)", repo_url)
-            if match:
-                repo_url = f"https://{req.token}@{match.group(1)}"
+        # Parse owner and repo name from GitHub URL
+        match = re.search(r"github\.com/([^/]+)/([^/.]+)", repo_url)
+        if not match:
+            raise HTTPException(status_code=400, detail="Invalid GitHub repository URL format")
 
-        res = clone_repository_tool(repo_url)
-        return res
+        owner = match.group(1)
+        repo = match.group(2)
+
+        # Prepare auth headers if GitHub Personal Access Token is provided
+        headers = {
+            "Accept": "application/vnd.github+json"
+        }
+        if req.token:
+            headers["Authorization"] = f"token {req.token}"
+
+        # Fetch repository zipball from GitHub API (redirects to default branch)
+        zipball_url = f"https://api.github.com/repos/{owner}/{repo}/zipball"
+
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            resp = await client.get(zipball_url, headers=headers)
+            if resp.status_code != 200:
+                raise Exception(f"Failed to fetch zipball from GitHub: HTTP {resp.status_code} - {resp.text}")
+
+            # Atomic extraction into WORKSPACE_DIR
+            ensure_workspace()
+            if os.path.exists(WORKSPACE_DIR):
+                try:
+                    shutil.rmtree(WORKSPACE_DIR)
+                except Exception:
+                    pass
+            os.makedirs(WORKSPACE_DIR, exist_ok=True)
+
+            zip_bytes = resp.content
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+                members = z.namelist()
+                if members:
+                    # Strip the dynamic top-level github folder (e.g. 'owner-repo-sha/')
+                    top_dir = members[0].split('/')[0]
+                    for member in members:
+                        if member == f"{top_dir}/":
+                            continue
+
+                        relative_path = member[len(top_dir)+1:]
+                        if not relative_path:
+                            continue
+
+                        target_path = os.path.join(WORKSPACE_DIR, relative_path)
+
+                        if member.endswith('/'):
+                            os.makedirs(target_path, exist_ok=True)
+                        else:
+                            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                            with open(target_path, "wb") as f:
+                                f.write(z.read(member))
+
+        # Initialize a local git repository so change tracking (git status) works perfectly
+        import shutil
+        import subprocess
+        if shutil.which("git") is not None:
+            try:
+                subprocess.run("git init", shell=True, cwd=WORKSPACE_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                subprocess.run(f"git remote add origin {repo_url}", shell=True, cwd=WORKSPACE_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                # To prevent git status from showing all initial files as untracked, we can commit them locally as clean baseline
+                subprocess.run("git config user.name 'MyAgent Bot'", shell=True, cwd=WORKSPACE_DIR)
+                subprocess.run("git config user.email 'myagent@bot.local'", shell=True, cwd=WORKSPACE_DIR)
+                subprocess.run("git add .", shell=True, cwd=WORKSPACE_DIR)
+                subprocess.run("git commit -m 'Initial baseline commit'", shell=True, cwd=WORKSPACE_DIR)
+            except Exception as e:
+                print(f"[Git Init Baseline Exception]: {e}")
+
+        # Save GitHub Configuration for REST Git tools fallback
+        import json
+        config_data = {
+            "owner": owner,
+            "repo": repo,
+            "token": req.token
+        }
+        config_path = os.path.join(WORKSPACE_DIR, ".github_config.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=2)
+
+        return {
+            "status": "success",
+            "message": f"Successfully cloned and extracted {owner}/{repo} into serverless workspace directory."
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Serverless clone failed: {str(e)}"
+        }
+
+# ==============================================================================
+# SECURE INTERACTIVE IDE WORKSPACE FILE ACCESS ENDPOINTS
+# ==============================================================================
+
+class SaveFileRequest(BaseModel):
+    filepath: str
+    content: str
+
+@app.get("/api/ide/files")
+async def api_ide_files():
+    """Lists files recursively under the workspace directory for the React explorer sidebar."""
+    from agent.tools import WORKSPACE_DIR, ensure_workspace
+    try:
+        ensure_workspace()
+        if not os.path.exists(WORKSPACE_DIR):
+            return {"status": "success", "files": []}
+
+        files_list = []
+        for root, dirs, files in os.walk(WORKSPACE_DIR):
+            # Skip hidden files and directories, plus pycache
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d != '__pycache__' and d != 'node_modules']
+            for file in files:
+                if file.startswith('.') or file.endswith('.tmp') or file == '.github_config.json':
+                    continue
+                rel_path = os.path.relpath(os.path.join(root, file), WORKSPACE_DIR)
+                files_list.append(rel_path.replace("\\", "/"))
+
+        return {"status": "success", "files": sorted(files_list)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/git/changes")
+async def api_git_changes():
+    """Runs git status --porcelain and returns structured file change indicators."""
+    from agent.tools import WORKSPACE_DIR, ensure_workspace
+    import subprocess
+    import shutil
+
+    ensure_workspace()
+    if not os.path.exists(os.path.join(WORKSPACE_DIR, ".git")):
+        return {"status": "success", "changes": {}}
+
+    try:
+        if shutil.which("git") is None:
+            return {"status": "success", "changes": {}}
+
+        process = subprocess.run(
+            "git status --porcelain",
+            shell=True,
+            cwd=WORKSPACE_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        changes = {}
+        if process.returncode == 0:
+            lines = process.stdout.splitlines()
+            for line in lines:
+                if len(line) > 3:
+                    status = line[:2].strip()
+                    # If empty status, default to 'M'
+                    if not status:
+                        status = 'M'
+                    filepath = line[3:].strip()
+                    # Strip quotes
+                    if filepath.startswith('"') and filepath.endswith('"'):
+                        filepath = filepath[1:-1]
+                    changes[filepath] = status
+
+        return {"status": "success", "changes": changes}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+class GitCommitPushRequest(BaseModel):
+    commit_message: str
+    repo_url: str
+    branch_name: str
+    token: str
+
+@app.post("/api/git/commit-push")
+async def api_git_commit_push(req: GitCommitPushRequest):
+    """Safely stages, commits, and pushes modified project files directly to GitHub with credentials."""
+    from agent.tools import WORKSPACE_DIR, ensure_workspace
+    import subprocess
+    import shutil
+    import os
+    import re
+
+    ensure_workspace()
+
+    if not os.path.exists(os.path.join(WORKSPACE_DIR, ".git")):
+        if shutil.which("git") is not None:
+            try:
+                subprocess.run("git init", shell=True, cwd=WORKSPACE_DIR)
+                subprocess.run(f"git remote add origin {req.repo_url}", shell=True, cwd=WORKSPACE_DIR)
+            except Exception as e:
+                return {"status": "error", "message": f"Failed to initialize git repository: {str(e)}"}
+        else:
+            return {"status": "error", "message": "Git CLI tool not found on the system."}
+
+    try:
+        # Set credentials temporarily
+        subprocess.run("git config user.name 'MyAgent Bot'", shell=True, cwd=WORKSPACE_DIR)
+        subprocess.run("git config user.email 'myagent@bot.local'", shell=True, cwd=WORKSPACE_DIR)
+
+        # Ensure correct branch is checked out/created locally first to prevent refspec mismatch issues
+        subprocess.run(f"git checkout -B {req.branch_name}", shell=True, cwd=WORKSPACE_DIR)
+
+        # Check changes to commit
+        status_process = subprocess.run(
+            "git status --porcelain",
+            shell=True,
+            cwd=WORKSPACE_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        if status_process.returncode != 0:
+            return {"status": "error", "message": f"Failed to check git status: {status_process.stderr}"}
+
+        changes = status_process.stdout.strip()
+
+        # Stage and commit
+        subprocess.run("git add .", shell=True, cwd=WORKSPACE_DIR)
+
+        if changes:
+            subprocess.run(
+                f'git commit -m "{req.commit_message}"',
+                shell=True,
+                cwd=WORKSPACE_DIR,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+
+        # Parse repository URL and inject token
+        repo_url_clean = req.repo_url.strip()
+        if repo_url_clean.startswith("https://"):
+            repo_url_clean = repo_url_clean[len("https://"):]
+        elif repo_url_clean.startswith("http://"):
+            repo_url_clean = repo_url_clean[len("http://"):]
+
+        authenticated_url = f"https://{req.token.strip()}@{repo_url_clean}"
+
+        # Execute push
+        push_cmd = f"git push {authenticated_url} {req.branch_name}"
+        push_process = subprocess.run(
+            push_cmd,
+            shell=True,
+            cwd=WORKSPACE_DIR,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=45
+        )
+
+        if push_process.returncode == 0:
+            return {"status": "success", "message": "Successfully committed and pushed changes to GitHub."}
+        else:
+            err_msg = push_process.stderr or "Unknown push error."
+            # Mask token in case it was printed in the git push error traceback
+            err_msg_masked = re.sub(r'https://[^@]+@', 'https://***@', err_msg)
+            return {"status": "error", "message": f"Git Push Error: {err_msg_masked}"}
+
+    except Exception as e:
+        return {"status": "error", "message": f"Fatal exception during git push execution: {str(e)}"}
+
+@app.get("/api/ide/file")
+async def api_ide_get_file(path: str):
+    """Loads content of a specific file from the workspace."""
+    from agent.tools import WORKSPACE_DIR, clean_path, ensure_workspace
+    try:
+        ensure_workspace()
+        target_path = clean_path(path)
+        if not os.path.exists(target_path):
+            raise HTTPException(status_code=404, detail="File not found")
+
+        with open(target_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        return {"status": "success", "content": content}
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/ide/file")
+async def api_ide_save_file(req: SaveFileRequest):
+    """Saves content of a specific file into the workspace."""
+    from agent.tools import WORKSPACE_DIR, clean_path, ensure_workspace
+    try:
+        ensure_workspace()
+        target_path = clean_path(req.filepath)
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(req.content)
+
+        return {"status": "success", "message": f"Successfully saved {req.filepath}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

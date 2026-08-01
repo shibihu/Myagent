@@ -8,6 +8,18 @@ from agent.tools import (
     git_checkout_tool, git_pull_tool
 )
 
+def filter_thought_process(text: str) -> str:
+    if not text or not isinstance(text, str):
+        return text
+    import re
+    # Strip <thought>...</thought> tags and everything inside them
+    text = re.sub(r"<thought>.*?</thought>", "", text, flags=re.DOTALL)
+    # Strip <reasoning>...</reasoning> tags
+    text = re.sub(r"<reasoning>.*?</reasoning>", "", text, flags=re.DOTALL)
+    # Strip markdown code blocks of thought if any
+    text = re.sub(r"```thought\s*.*?\s*```", "", text, flags=re.DOTALL)
+    return text.strip()
+
 class ChatAgent:
     def __init__(self):
         # รวบรวม API Keys จากค่ายต่างๆ (หยิบจาก Environment ปลอดภัยไร้คีย์ดิบ)
@@ -16,7 +28,13 @@ class ChatAgent:
         self.openai_key = os.getenv("OPENAI_API_KEY", "")
         self.openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
 
-    async def get_response(self, prompt: str, history: list = None, status_callback=None) -> dict:
+    async def get_response(self, prompt: str, history: list = None, status_callback=None, is_roblox: bool = False) -> dict:
+        res = await self._get_response_core(prompt, history, status_callback, is_roblox)
+        if res and isinstance(res, dict) and "reply" in res:
+            res["reply"] = filter_thought_process(res["reply"])
+        return res
+
+    async def _get_response_core(self, prompt: str, history: list = None, status_callback=None, is_roblox: bool = False) -> dict:
         """ระบบสลับสมองข้ามค่ายอัตโนมัติพร้อมระบบ Tool Calling (Function Calling) และ Sliding Window History"""
         
         async def trigger_status(msg: str):
@@ -28,16 +46,84 @@ class ChatAgent:
 
         await trigger_status("Thinking / Processing...")
 
+        # Determine Environment Context
+        from agent.tools import WORKSPACE_DIR
+        import os
+
+        # 1. Roblox Studio Check
+        is_roblox_conn = is_roblox
+        if not is_roblox_conn:
+            prompt_lower = prompt.lower()
+            if "roblox" in prompt_lower or "luau" in prompt_lower or "roblox studio" in prompt_lower:
+                is_roblox_conn = True
+
+        # 2. Cloned Repository Check
+        has_repo = False
+        if os.path.exists(WORKSPACE_DIR):
+            if os.path.exists(os.path.join(WORKSPACE_DIR, ".git")):
+                has_repo = True
+            else:
+                try:
+                    items = [i for i in os.listdir(WORKSPACE_DIR) if i not in (".", "..", ".git", "__pycache__")]
+                    if len(items) > 0:
+                        has_repo = True
+                except Exception:
+                    pass
+
+        # Build dynamic environment context segment for system prompt
+        if is_roblox_conn:
+            env_status = "ROBLOX STUDIO CONNECTION (Active Studio Session)"
+            env_instruction = (
+                "1. Recognize that you are interacting with Roblox Studio via HTTP/MCP Tunnel.\n"
+                "2. Understand the Luau / Roblox engine context of the request.\n"
+                "3. Utilize available Roblox MCP tools or structure your JSON response specifically so Roblox Studio scripts can execute the actions seamlessly."
+            )
+        elif has_repo:
+            env_status = "WORKSPACE WITH CLONED REPOSITORY (Repository Present)"
+            env_instruction = (
+                "1. If the user requests to create or modify a file (e.g., \"create file html to create template UI\") WITHOUT explicitly providing a directory path, automatically default the file path to the Root Directory (`./`).\n"
+                "2. Use workspace file tools (e.g., `write_file`) to write clean, production-ready code directly to disk.\n"
+                "3. STRICTLY PROHIBITED: Do not write useless/trash code, boilerplate placeholder comments (e.g., // TODO), or unnecessary explanations inside the generated file."
+            )
+        else:
+            env_status = "NO REPOSITORY (Empty Workspace / Standalone Chat)"
+            env_instruction = (
+                "1. Do NOT attempt to invoke disk writing tools or create files on the system (e.g., write_file, patch_file, execute_command to write files).\n"
+                "2. Output the complete, fully functional code directly inside the chat as a clean Markdown code block so the user can easily review and copy it."
+            )
+
+        system_content = (
+            "คุณคือ AI IDE Agent ที่มี Tools จัดการไฟล์และ Git\n\n"
+            "==================================================\n"
+            f"CURRENT DETECTED ENVIRONMENT CONTEXT:\n"
+            f"- Environment Status: {env_status}\n"
+            "==================================================\n"
+            "[EXECUTION INSTRUCTION]\n"
+            "Always analyze the current Environment Context (Has Repo, Is Roblox Studio) BEFORE deciding whether to execute disk tools, return code blocks in chat, or route commands through Roblox MCP.\n"
+            "==================================================\n"
+            "STRICT OPERATIONAL RULES FOR THIS ENVIRONMENT:\n"
+            f"{env_instruction}\n"
+            "==================================================\n\n"
+            "ROBLOX DUAL-MODE SCRIPTING & CONTEXT RULES:\n"
+            "คุณต้องสนับสนุนการเขียนสคริปต์ Roblox ทั้ง 2 รูปแบบแยกกันอย่างชัดเจนและไม่สับสน:\n"
+            "- **Mode A (Repository / Rojo):** เขียนไฟล์ `.lua` หรือ `.luau` ลงในเครื่อง/โฟลเดอร์ Git Workspace ทันที (เช่น `src/Server/Script.lua` หรือ `ServerScript.lua`) ผ่านเครื่องมือเขียนไฟล์ (`write_file`, `patch_file`)\n"
+            "  *เมื่อทำงานใน Mode A นี้ คุณต้องพิมพ์ข้อความยืนยันสถานะอย่างชัดเจนเสมอว่า*:\n"
+            "  \"Created file `<ชื่อไฟล์>` in your Git Repository workspace. (Sync via Rojo or commit to GitHub to apply in Studio).\"\n"
+            "- **Mode B (Live Roblox Studio via Plugin/Bridge):** หากมี Plugin/Bridge เชื่อมต่อสดกับ Roblox Studio จริงๆ เท่านั้น จึงจะส่งคำสั่งสร้าง/อัปเดตอ็อบเจกต์ (Instance) ใน `game.Workspace` ได้\n\n"
+            "🚨 ข้อห้ามที่สำคัญที่สุด (STRICT NO-HALLUCINATION RULE):\n"
+            "1. ห้ามสับสนระหว่าง `Repo Workspace` และ `Roblox Studio Explorer (game.Workspace)` เด็ดขาด!\n"
+            "2. ห้ามเคลมหรือบอกว่าคุณได้สร้างอ็อบเจกต์ในโปรแกรม Roblox Studio จริงๆ เป็นอันขาด เว้นแต่ว่าจะมีการสั่งการผ่าน HTTP Bridge/Plugin ที่สำเร็จและได้รับการยืนยันจริงเท่านั้น!\n"
+            "==================================================\n\n"
+            "หากผู้ใช้สั่งให้ Clone Repo, อ่านไฟล์, หรือดูรายชื่อไฟล์ (และอยู่ในสถานะมี Repository) คุณต้องเรียกใช้ Tool "
+            "(`git_clone`, `list_directory`, `read_file`, `patch_file`, `write_file`, `execute_command`) จริงๆ เท่านั้น "
+            "**ห้ามเขียนคำอธิบายคำสั่ง Terminal หรือจำลองผลลัพธ์ขึ้นมาเองเด็ดขาด** "
+            "คุณมีสิทธิ์เข้าถึง แก้ไข อ่าน และจัดการไฟล์ใน Workspace ผ่านเครื่องมือ (Tools) ที่มีให้ "
+            "หลังรันเครื่องมือเสร็จสิ้น ให้สรุปคำตอบให้ผู้ใช้อย่างชัดเจนและเป็นมิตร"
+        )
+
         system_message = {
             "role": "system",
-            "content": (
-                "คุณคือ AI IDE Agent ที่มี Tools จัดการไฟล์และ Git "
-                "หากผู้ใช้สั่งให้ Clone Repo, อ่านไฟล์, หรือดูรายชื่อไฟล์ คุณต้องเรียกใช้ Tool "
-                "(`git_clone`, `list_directory`, `read_file`, `patch_file`, `write_file`, `execute_command`) จริงๆ เท่านั้น "
-                "**ห้ามเขียนคำอธิบายคำสั่ง Terminal หรือจำลองผลลัพธ์ขึ้นมาเองเด็ดขาด** "
-                "คุณมีสิทธิ์เข้าถึง แก้ไข อ่าน และจัดการไฟล์ใน Workspace ผ่านเครื่องมือ (Tools) ที่มีให้ "
-                "หลังรันเครื่องมือเสร็จสิ้น ให้สรุปคำตอบให้ผู้ใช้อย่างชัดเจนและเป็นมิตร"
-            )
+            "content": system_content
         }
 
         # Build message history with role translation (user / assistant)
@@ -63,7 +149,7 @@ class ChatAgent:
                         "properties": {
                             "filepath": {
                                 "type": "string",
-                                "description": "The relative path to the file inside the workspace."
+                                "description": "The relative path to the file inside the workspace. If no directory is specified, default to root directory './' (e.g., 'test.py')."
                             }
                         },
                         "required": ["filepath"]
@@ -80,11 +166,11 @@ class ChatAgent:
                         "properties": {
                             "filepath": {
                                 "type": "string",
-                                "description": "The relative path to the file inside the workspace."
+                                "description": "The relative path to the file inside the workspace. If no directory is specified, default to root directory './' (e.g., 'index.html')."
                             },
                             "content": {
                                 "type": "string",
-                                "description": "The complete text content to write into the file."
+                                "description": "The complete text content to write into the file. MUST be clean, production-ready code. Boilerplate comment placeholders (e.g. // TODO) and explanation commentary inside the file are STRICTLY PROHIBITED."
                             }
                         },
                         "required": ["filepath", "content"]
@@ -118,7 +204,7 @@ class ChatAgent:
                         "properties": {
                             "filepath": {
                                 "type": "string",
-                                "description": "The relative path to the file to patch."
+                                "description": "The relative path to the file to patch. If no directory is specified, default to root directory './' (e.g., 'app.py')."
                             },
                             "search_block": {
                                 "type": "string",
@@ -126,7 +212,7 @@ class ChatAgent:
                             },
                             "replace_block": {
                                 "type": "string",
-                                "description": "The block of code to replace it with."
+                                "description": "The block of code to replace it with. MUST be clean, production-ready code. Boilerplate comment placeholders (e.g. // TODO) are STRICTLY PROHIBITED."
                             }
                         },
                         "required": ["filepath", "search_block", "replace_block"]
@@ -224,6 +310,13 @@ class ChatAgent:
                 }
             }
         ]
+
+        # Filter tools_schema based on repository state to strictly adhere to Rule 2 (No Repository -> No disk-writing/execution tools)
+        if not has_repo:
+            tools_schema = [
+                t for t in tools_schema
+                if t["function"]["name"] not in ["write_file", "patch_file", "execute_command"]
+            ]
 
         # Map tool names to Python functions
         def execute_local_tool(name: str, args: dict) -> dict:

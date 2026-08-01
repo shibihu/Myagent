@@ -8,3 +8,6 @@ python-multipart
 motor
 dnspython
 asyncpg
+pyjwt
+sqlalchemy
+psycopg2-binary
