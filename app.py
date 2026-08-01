@@ -9,7 +9,7 @@ import io
 from dotenv import load_dotenv
 
 # โหลด .env จาก root directory ก่อนทุกอย่าง
-load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env.example"))
 
 # ตรวจสอบ keys ตอน startup
 _key_status = {
