@@ -37,3 +37,16 @@ INFO:     127.0.0.1:54648 - "GET /auth/me HTTP/1.1" 200 OK
 INFO:     127.0.0.1:54658 - "GET /api/ide/files HTTP/1.1" 200 OK
 INFO:     127.0.0.1:54668 - "GET /chats HTTP/1.1" 200 OK
 INFO:     127.0.0.1:60592 - "GET /api/git/changes HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:33512 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33512 - "GET /api/git/changes HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:52112 - "GET /auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52126 - "GET /api/ide/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52132 - "GET /chats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46318 - "GET /api/git/changes HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:56922 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56922 - "GET /api/git/list-repos HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:56924 - "GET /api/git/changes HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:56930 - "GET /auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56942 - "GET /chats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56952 - "GET /api/ide/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60750 - "GET /api/git/changes HTTP/1.1" 404 Not Found

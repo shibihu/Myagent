@@ -276,9 +276,117 @@
             return <div ref={terminalRef} className="w-full h-full bg-[#18181c] overflow-hidden" style={{ minHeight: '120px' }} />;
         };
 
+        const FileNode = ({ node, activeTab, onSelectFile, expandedFolders, onToggleFolder, gitChanges, isMobile, setMobileView }) => {
+            if (!node) return null;
+
+            const isDirectory = node.isDirectory;
+            const isExpanded = !!expandedFolders[node.path];
+            const gitStatus = gitChanges[node.path];
+
+            let badgeColor = "";
+            let badgeLabel = "";
+            if (gitStatus === "M") {
+                badgeColor = "text-amber-500 font-bold text-[10px]";
+                badgeLabel = "M";
+            } else if (gitStatus === "A" || gitStatus === "??" || gitStatus === "U") {
+                badgeColor = "text-green-500 font-bold text-[10px]";
+                badgeLabel = gitStatus === "??" ? "U" : "A";
+            } else if (gitStatus === "D") {
+                badgeColor = "text-red-500 font-bold text-[10px]";
+                badgeLabel = "D";
+            }
+
+            if (isDirectory) {
+                // If it's the root node, just render its children without rendering the root folder row
+                if (node.path === "") {
+                    return (
+                        <div className="space-y-1">
+                            {node.children && node.children.map(child => (
+                                <FileNode
+                                    key={child.path}
+                                    node={child}
+                                    activeTab={activeTab}
+                                    onSelectFile={onSelectFile}
+                                    expandedFolders={expandedFolders}
+                                    onToggleFolder={onToggleFolder}
+                                    gitChanges={gitChanges}
+                                    isMobile={isMobile}
+                                    setMobileView={setMobileView}
+                                />
+                            ))}
+                        </div>
+                    );
+                }
+
+                return (
+                    <div className="space-y-1">
+                        <button
+                            onClick={() => onToggleFolder(node.path)}
+                            className="w-full text-left px-2 py-1.5 rounded text-xs hover:bg-[#18181c] hover:text-white transition-colors flex items-center justify-between text-gray-400 font-medium"
+                        >
+                            <div className="flex items-center space-x-2 truncate">
+                                <i className={`fa-solid ${isExpanded ? 'fa-chevron-down' : 'fa-chevron-right'} text-[9px] text-gray-500 w-3`}></i>
+                                <i className="fa-regular fa-folder text-brandBlue"></i>
+                                <span className="truncate">{node.name}</span>
+                            </div>
+                        </button>
+                        {isExpanded && node.children && (
+                            <div className="pl-3 border-l border-borderCol ml-3 space-y-1">
+                                {node.children.map(child => (
+                                    <FileNode
+                                        key={child.path}
+                                        node={child}
+                                        activeTab={activeTab}
+                                        onSelectFile={onSelectFile}
+                                        expandedFolders={expandedFolders}
+                                        onToggleFolder={onToggleFolder}
+                                        gitChanges={gitChanges}
+                                        isMobile={isMobile}
+                                        setMobileView={setMobileView}
+                                    />
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                );
+            }
+
+            // File Node
+            const f = node.path;
+            const ext = node.name.split('.').pop().toLowerCase();
+            let iconClass = "fa-solid fa-file-code text-brandBlue";
+            if (ext === "py") {
+                iconClass = "fa-brands fa-python text-yellow-500";
+            } else if (ext === "luau" || ext === "lua") {
+                iconClass = "fa-solid fa-gem text-blue-400";
+            }
+
+            return (
+                <button
+                    onClick={() => { onSelectFile(f); if (isMobile) setMobileView("editor"); }}
+                    className={`w-full text-left px-2 py-1.5 rounded text-xs hover:bg-[#18181c] hover:text-white transition-colors flex items-center justify-between ${activeTab === f ? 'bg-[#18181c] text-white border-l-2 border-brandBlue' : 'text-gray-400'}`}
+                >
+                    <div className="flex items-center space-x-2 truncate">
+                        <span className="w-3"></span> {/* Spacing aligning with dir chevron */}
+                        <i className={iconClass}></i>
+                        <span className="truncate">{node.name}</span>
+                    </div>
+                    {badgeLabel && (
+                        <span className={`${badgeColor} px-1.5`} title={gitStatus === "M" ? "Modified" : "Untracked/Added"}>
+                            {badgeLabel}
+                        </span>
+                    )}
+                </button>
+            );
+        };
+
         function App() {
             // Layout & Selection state
             const [files, setFiles] = useState([]);
+            const [fileTree, setFileTree] = useState(null);
+            const [expandedFolders, setExpandedFolders] = useState({});
+            const [clonedRepos, setClonedRepos] = useState([]);
+            const [activeRepo, setActiveRepo] = useState(null);
             const [openTabs, setOpenTabs] = useState([]);
             const [activeTab, setActiveTab] = useState(null);
             const [activeSidebar, setActiveSidebar] = useState("explorer");
@@ -378,6 +486,13 @@
                 setGitBranchName(localStorage.getItem("myagent_git_branch_name") || "main");
                 setGitPat(localStorage.getItem("myagent_git_pat") || "");
 
+                // Restore persistent GitHub Token
+                const savedToken = localStorage.getItem("myagent_github_token") || "";
+                setGithubToken(savedToken);
+
+                // Fetch cloned repositories list
+                fetchClonedReposList();
+
                 // Periodically fetch git changes
                 fetchGitChanges();
                 const gitInterval = setInterval(fetchGitChanges, 10000);
@@ -443,9 +558,33 @@
                         });
                 }
 
-                // Load files listing and chat sessions
-                fetchFilesList();
+                // Load chat sessions
                 fetchChatSessions();
+
+                // If last active repository exists, switch context on backend
+                const lastActiveRepo = localStorage.getItem("myagent_active_repo");
+                if (lastActiveRepo) {
+                    fetch('/api/git/switch-repo', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ repo_name: lastActiveRepo })
+                    })
+                    .then(res => res.ok ? res.json() : null)
+                    .then(data => {
+                        if (data && data.status === "success") {
+                            setActiveRepo(lastActiveRepo);
+                            fetchFilesList();
+                            fetchGitChanges();
+                        } else {
+                            fetchFilesList();
+                        }
+                    })
+                    .catch(() => {
+                        fetchFilesList();
+                    });
+                } else {
+                    fetchFilesList();
+                }
 
                 // Restoring active chat from local storage
                 try {
@@ -578,8 +717,57 @@
                     .then(data => {
                         if (data && data.status === "success") {
                             setFiles(data.files || []);
+                            setFileTree(data.tree || null);
                         }
                     });
+            };
+
+            const fetchClonedReposList = () => {
+                fetch('/api/git/list-repos')
+                    .then(res => res.ok ? res.json() : null)
+                    .then(data => {
+                        if (data && data.status === "success") {
+                            setClonedRepos(data.repos || []);
+                            setActiveRepo(data.active_repo || null);
+                        }
+                    });
+            };
+
+            const switchActiveRepo = (repoName) => {
+                fetch('/api/git/switch-repo', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ repo_name: repoName })
+                })
+                .then(res => res.ok ? res.json() : null)
+                .then(data => {
+                    if (data && data.status === "success") {
+                        setActiveRepo(repoName);
+                        if (repoName) {
+                            localStorage.setItem("myagent_active_repo", repoName);
+                            triggerToast(`Switched workspace context to ${repoName}`, "success");
+                        } else {
+                            localStorage.removeItem("myagent_active_repo");
+                            triggerToast(`Switched workspace context to Root Workspace`, "success");
+                        }
+                        // Refresh everything instantly
+                        fetchFilesList();
+                        fetchGitChanges();
+                        fetchClonedReposList();
+                    } else {
+                        triggerToast("Failed to switch repository context", "error");
+                    }
+                })
+                .catch(() => {
+                    triggerToast("Network error switching repository context", "error");
+                });
+            };
+
+            const toggleFolder = (path) => {
+                setExpandedFolders(prev => ({
+                    ...prev,
+                    [path]: !prev[path]
+                }));
             };
 
             // Fetch chat sessions
@@ -940,6 +1128,7 @@
                     const data = await resp.json();
                     if (data.status === "success" && data.repos) {
                         setGithubRepos(data.repos);
+                        localStorage.setItem("myagent_github_token", githubToken);
                         triggerToast("Loaded repository listings!", "success");
                     } else {
                         triggerToast("Token not recognized. Please check and retry.", "error");
@@ -963,7 +1152,15 @@
                     if (data.status === "success") {
                         triggerToast("Successfully cloned repository!", "success");
                         setShowGithubModal(false);
+                        localStorage.setItem("myagent_github_token", githubToken);
+                        if (data.repo_name) {
+                            localStorage.setItem("myagent_active_repo", data.repo_name);
+                            setActiveRepo(data.repo_name);
+                        }
+                        // Refresh tree and cloned repos list
                         fetchFilesList();
+                        fetchGitChanges();
+                        fetchClonedReposList();
                     } else {
                         triggerToast(data.message || "Failed to clone", "error");
                     }
@@ -1127,6 +1324,26 @@
 
                                     {activeSidebar === "explorer" && (
                                         <div class="space-y-4">
+                                            {/* Active Project Selector */}
+                                            <div class="px-2 pb-3 border-b border-borderCol/60 mb-2">
+                                                <label class="text-[10px] text-textMuted font-bold uppercase tracking-wider block mb-1">Active Project</label>
+                                                <div class="flex items-center space-x-1.5">
+                                                    <select
+                                                        value={activeRepo || ""}
+                                                        onChange={(e) => switchActiveRepo(e.target.value || null)}
+                                                        class="bg-panelBg border border-borderCol rounded p-1.5 text-xs text-white flex-1 focus:outline-none focus:border-brandBlue cursor-pointer"
+                                                    >
+                                                        <option value="">[ Root Workspace ]</option>
+                                                        {clonedRepos.map(r => (
+                                                            <option key={r} value={r}>📦 {r}</option>
+                                                        ))}
+                                                    </select>
+                                                    <button onClick={() => setShowGithubModal(true)} title="Clone / Import Repo" class="bg-panelBg hover:bg-surfaceBg border border-borderCol rounded p-1.5 text-xs text-brandBlue hover:text-white transition-colors flex items-center justify-center h-8 w-8">
+                                                        <i class="fa-solid fa-cloud-arrow-down"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+
                                             {files.length === 0 ? (
                                                 <div class="text-center py-12 space-y-4 px-4">
                                                     <i class="fa-solid fa-folder-tree text-3xl text-gray-600 block"></i>
@@ -1138,39 +1355,24 @@
                                                 </div>
                                             ) : (
                                                 <div class="space-y-1">
-                                                    <div class="text-xs font-semibold text-gray-400 px-2 flex items-center space-x-1.5 pb-1">
+                                                    <div class="text-xs font-semibold text-gray-400 px-2 flex items-center space-x-1.5 pb-1 mb-2">
                                                         <i class="fa-solid fa-chevron-down text-[10px]"></i>
                                                         <span>WORKSPACE-ROOT</span>
                                                     </div>
-                                                    {files.map(f => {
-                                                        const gitStatus = gitChanges[f];
-                                                        let badgeColor = "";
-                                                        let badgeLabel = "";
-                                                        if (gitStatus === "M") {
-                                                            badgeColor = "text-amber-500 font-bold text-[10px]";
-                                                            badgeLabel = "M";
-                                                        } else if (gitStatus === "A" || gitStatus === "??" || gitStatus === "U") {
-                                                            badgeColor = "text-green-500 font-bold text-[10px]";
-                                                            badgeLabel = gitStatus === "??" ? "U" : "A";
-                                                        } else if (gitStatus === "D") {
-                                                            badgeColor = "text-red-500 font-bold text-[10px]";
-                                                            badgeLabel = "D";
-                                                        }
-
-                                                        return (
-                                                            <button key={f} onClick={() => { handleSelectFile(f); if (isMobile) setMobileView("editor"); }} class={`w-full text-left px-4 py-1.5 rounded text-xs hover:bg-panelBg hover:text-white transition-colors flex items-center justify-between ${activeTab === f ? 'bg-panelBg text-white border-l-2 border-brandBlue' : 'text-gray-400'}`}>
-                                                                <div class="flex items-center space-x-2 truncate">
-                                                                    <i class={`fa-solid ${f.endsWith('.py') ? 'fa-brands fa-python text-yellow-500' : f.endsWith('.luau') ? 'fa-solid fa-gem text-blue-400' : 'fa-solid fa-file-code text-brandBlue'}`}></i>
-                                                                    <span class="truncate">{f}</span>
-                                                                </div>
-                                                                {badgeLabel && (
-                                                                    <span class={`${badgeColor} px-1.5`} title={gitStatus === "M" ? "Modified" : "Untracked/Added"}>
-                                                                        {badgeLabel}
-                                                                    </span>
-                                                                )}
-                                                            </button>
-                                                        );
-                                                    })}
+                                                    {fileTree ? (
+                                                        <FileNode
+                                                            node={fileTree}
+                                                            activeTab={activeTab}
+                                                            onSelectFile={handleSelectFile}
+                                                            expandedFolders={expandedFolders}
+                                                            onToggleFolder={toggleFolder}
+                                                            gitChanges={gitChanges}
+                                                            isMobile={isMobile}
+                                                            setMobileView={setMobileView}
+                                                        />
+                                                    ) : (
+                                                        <div class="text-xs text-textMuted text-center py-4">Building tree...</div>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
