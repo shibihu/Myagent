@@ -1,5 +1,5 @@
 # Environment Files (หากในอนาคตมีการแยกคีย์ความลับ)
-.env.example
+.env
 
 # Python Cache (ไฟล์ขยะของ Python)
 __pycache__/

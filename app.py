@@ -723,8 +723,6 @@ async def api_github_clone(req: GitHubCloneRequest):
 
         owner = match.group(1)
         repo = match.group(2)
-        if repo.endswith(".git"):
-            repo = repo[:-4]
 
         # Prepare auth headers if GitHub Personal Access Token is provided
         headers = {
@@ -741,15 +739,14 @@ async def api_github_clone(req: GitHubCloneRequest):
             if resp.status_code != 200:
                 raise Exception(f"Failed to fetch zipball from GitHub: HTTP {resp.status_code} - {resp.text}")
 
-            # Atomic extraction into target_repo_dir under WORKSPACE_DIR
+            # Atomic extraction into WORKSPACE_DIR
             ensure_workspace()
-            target_repo_dir = os.path.join(WORKSPACE_DIR, repo)
-            if os.path.exists(target_repo_dir):
+            if os.path.exists(WORKSPACE_DIR):
                 try:
-                    shutil.rmtree(target_repo_dir)
+                    shutil.rmtree(WORKSPACE_DIR)
                 except Exception:
                     pass
-            os.makedirs(target_repo_dir, exist_ok=True)
+            os.makedirs(WORKSPACE_DIR, exist_ok=True)
 
             zip_bytes = resp.content
             with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
@@ -765,7 +762,7 @@ async def api_github_clone(req: GitHubCloneRequest):
                         if not relative_path:
                             continue
 
-                        target_path = os.path.join(target_repo_dir, relative_path)
+                        target_path = os.path.join(WORKSPACE_DIR, relative_path)
 
                         if member.endswith('/'):
                             os.makedirs(target_path, exist_ok=True)
@@ -779,13 +776,13 @@ async def api_github_clone(req: GitHubCloneRequest):
         import subprocess
         if shutil.which("git") is not None:
             try:
-                subprocess.run("git init", shell=True, cwd=target_repo_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                subprocess.run(f"git remote add origin {repo_url}", shell=True, cwd=target_repo_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                subprocess.run("git init", shell=True, cwd=WORKSPACE_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                subprocess.run(f"git remote add origin {repo_url}", shell=True, cwd=WORKSPACE_DIR, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 # To prevent git status from showing all initial files as untracked, we can commit them locally as clean baseline
-                subprocess.run("git config user.name 'MyAgent Bot'", shell=True, cwd=target_repo_dir)
-                subprocess.run("git config user.email 'myagent@bot.local'", shell=True, cwd=target_repo_dir)
-                subprocess.run("git add .", shell=True, cwd=target_repo_dir)
-                subprocess.run("git commit -m 'Initial baseline commit'", shell=True, cwd=target_repo_dir)
+                subprocess.run("git config user.name 'MyAgent Bot'", shell=True, cwd=WORKSPACE_DIR)
+                subprocess.run("git config user.email 'myagent@bot.local'", shell=True, cwd=WORKSPACE_DIR)
+                subprocess.run("git add .", shell=True, cwd=WORKSPACE_DIR)
+                subprocess.run("git commit -m 'Initial baseline commit'", shell=True, cwd=WORKSPACE_DIR)
             except Exception as e:
                 print(f"[Git Init Baseline Exception]: {e}")
 
@@ -796,18 +793,13 @@ async def api_github_clone(req: GitHubCloneRequest):
             "repo": repo,
             "token": req.token
         }
-        config_path = os.path.join(target_repo_dir, ".github_config.json")
+        config_path = os.path.join(WORKSPACE_DIR, ".github_config.json")
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(config_data, f, indent=2)
 
-        # Set active repository name immediately
-        import agent.tools as tools
-        tools.ACTIVE_REPO_NAME = repo
-
         return {
             "status": "success",
-            "message": f"Successfully cloned and extracted {owner}/{repo} into sub-workspace directory.",
-            "repo_name": repo
+            "message": f"Successfully cloned and extracted {owner}/{repo} into serverless workspace directory."
         }
     except Exception as e:
         return {
@@ -823,104 +815,38 @@ class SaveFileRequest(BaseModel):
     filepath: str
     content: str
 
-def build_tree_recursive(path: str, base_path: str) -> dict:
-    name = os.path.basename(path) if path != base_path else "root"
-    rel_path = os.path.relpath(path, base_path).replace("\\", "/")
-    if rel_path == ".":
-        rel_path = ""
-
-    is_dir = os.path.isdir(path)
-    node = {
-        "name": name,
-        "path": rel_path,
-        "isDirectory": is_dir
-    }
-
-    if is_dir:
-        children = []
-        try:
-            entries = os.listdir(path)
-        except Exception:
-            entries = []
-
-        for entry in sorted(entries):
-            if entry.startswith('.') or entry == '__pycache__' or entry == 'node_modules' or entry == '.github_config.json' or entry.endswith('.tmp'):
-                continue
-            child_path = os.path.join(path, entry)
-            children.append(build_tree_recursive(child_path, base_path))
-
-        node["children"] = children
-
-    return node
-
-class SwitchRepoRequest(BaseModel):
-    repo_name: Optional[str] = None # None means reset/root directory
-
-@app.get("/api/git/list-repos")
-async def api_git_list_repos():
-    """Lists all cloned repositories under the base workspace folder."""
-    from agent.tools import ensure_workspace, ACTIVE_REPO_NAME, WORKSPACE_DIR
-    base = ensure_workspace()
-    repos = []
-    if os.path.exists(base):
-        try:
-            for entry in os.listdir(base):
-                full_path = os.path.join(base, entry)
-                if os.path.isdir(full_path) and not entry.startswith('.'):
-                    # It's a candidate repository subdirectory
-                    repos.append(entry)
-        except Exception:
-            pass
-    return {"status": "success", "repos": sorted(repos), "active_repo": ACTIVE_REPO_NAME}
-
-@app.post("/api/git/switch-repo")
-async def api_git_switch_repo(req: SwitchRepoRequest):
-    """Switches the active workspace subdirectory repository context."""
-    import agent.tools as tools
-    if req.repo_name:
-        base = tools.ensure_workspace()
-        target = os.path.join(base, req.repo_name)
-        if not os.path.exists(target):
-            os.makedirs(target, exist_ok=True)
-        tools.ACTIVE_REPO_NAME = req.repo_name
-    else:
-        tools.ACTIVE_REPO_NAME = None
-    return {"status": "success", "active_repo": tools.ACTIVE_REPO_NAME}
-
 @app.get("/api/ide/files")
 async def api_ide_files():
     """Lists files recursively under the workspace directory for the React explorer sidebar."""
-    from agent.tools import get_active_workspace
+    from agent.tools import WORKSPACE_DIR, ensure_workspace
     try:
-        ws = get_active_workspace()
-        if not os.path.exists(ws):
-            return {"status": "success", "files": [], "tree": {"name": "root", "path": "", "isDirectory": True, "children": []}}
+        ensure_workspace()
+        if not os.path.exists(WORKSPACE_DIR):
+            return {"status": "success", "files": []}
 
         files_list = []
-        for root, dirs, files in os.walk(ws):
+        for root, dirs, files in os.walk(WORKSPACE_DIR):
             # Skip hidden files and directories, plus pycache
             dirs[:] = [d for d in dirs if not d.startswith('.') and d != '__pycache__' and d != 'node_modules']
             for file in files:
                 if file.startswith('.') or file.endswith('.tmp') or file == '.github_config.json':
                     continue
-                rel_path = os.path.relpath(os.path.join(root, file), ws)
+                rel_path = os.path.relpath(os.path.join(root, file), WORKSPACE_DIR)
                 files_list.append(rel_path.replace("\\", "/"))
 
-        # Build tree representation
-        tree = build_tree_recursive(ws, ws)
-        return {"status": "success", "files": sorted(files_list), "tree": tree}
+        return {"status": "success", "files": sorted(files_list)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/git/changes")
 async def api_git_changes():
     """Runs git status --porcelain and returns structured file change indicators."""
-    from agent.tools import get_active_workspace
+    from agent.tools import WORKSPACE_DIR, ensure_workspace
     import subprocess
     import shutil
 
-    ws = get_active_workspace()
-    if not os.path.exists(os.path.join(ws, ".git")):
+    ensure_workspace()
+    if not os.path.exists(os.path.join(WORKSPACE_DIR, ".git")):
         return {"status": "success", "changes": {}}
 
     try:
@@ -930,7 +856,7 @@ async def api_git_changes():
         process = subprocess.run(
             "git status --porcelain",
             shell=True,
-            cwd=ws,
+            cwd=WORKSPACE_DIR,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True
@@ -964,19 +890,19 @@ class GitCommitPushRequest(BaseModel):
 @app.post("/api/git/commit-push")
 async def api_git_commit_push(req: GitCommitPushRequest):
     """Safely stages, commits, and pushes modified project files directly to GitHub with credentials."""
-    from agent.tools import get_active_workspace
+    from agent.tools import WORKSPACE_DIR, ensure_workspace
     import subprocess
     import shutil
     import os
     import re
 
-    ws = get_active_workspace()
+    ensure_workspace()
 
-    if not os.path.exists(os.path.join(ws, ".git")):
+    if not os.path.exists(os.path.join(WORKSPACE_DIR, ".git")):
         if shutil.which("git") is not None:
             try:
-                subprocess.run("git init", shell=True, cwd=ws)
-                subprocess.run(f"git remote add origin {req.repo_url}", shell=True, cwd=ws)
+                subprocess.run("git init", shell=True, cwd=WORKSPACE_DIR)
+                subprocess.run(f"git remote add origin {req.repo_url}", shell=True, cwd=WORKSPACE_DIR)
             except Exception as e:
                 return {"status": "error", "message": f"Failed to initialize git repository: {str(e)}"}
         else:
@@ -984,17 +910,17 @@ async def api_git_commit_push(req: GitCommitPushRequest):
 
     try:
         # Set credentials temporarily
-        subprocess.run("git config user.name 'MyAgent Bot'", shell=True, cwd=ws)
-        subprocess.run("git config user.email 'myagent@bot.local'", shell=True, cwd=ws)
+        subprocess.run("git config user.name 'MyAgent Bot'", shell=True, cwd=WORKSPACE_DIR)
+        subprocess.run("git config user.email 'myagent@bot.local'", shell=True, cwd=WORKSPACE_DIR)
 
         # Ensure correct branch is checked out/created locally first to prevent refspec mismatch issues
-        subprocess.run(f"git checkout -B {req.branch_name}", shell=True, cwd=ws)
+        subprocess.run(f"git checkout -B {req.branch_name}", shell=True, cwd=WORKSPACE_DIR)
 
         # Check changes to commit
         status_process = subprocess.run(
             "git status --porcelain",
             shell=True,
-            cwd=ws,
+            cwd=WORKSPACE_DIR,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True
@@ -1005,13 +931,13 @@ async def api_git_commit_push(req: GitCommitPushRequest):
         changes = status_process.stdout.strip()
 
         # Stage and commit
-        subprocess.run("git add .", shell=True, cwd=ws)
+        subprocess.run("git add .", shell=True, cwd=WORKSPACE_DIR)
 
         if changes:
             subprocess.run(
                 f'git commit -m "{req.commit_message}"',
                 shell=True,
-                cwd=ws,
+                cwd=WORKSPACE_DIR,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True
@@ -1031,7 +957,7 @@ async def api_git_commit_push(req: GitCommitPushRequest):
         push_process = subprocess.run(
             push_cmd,
             shell=True,
-            cwd=ws,
+            cwd=WORKSPACE_DIR,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

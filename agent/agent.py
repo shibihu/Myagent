@@ -1,5 +1,4 @@
 import os
-from dotenv import load_dotenv
 import httpx
 import json
 from agent.tools import (
@@ -8,8 +7,6 @@ from agent.tools import (
     clone_repository_tool, git_status_tool, git_rollback_tool,
     git_checkout_tool, git_pull_tool
 )
-
-load_dotenv(".env.example")  # Load environment variables from .env file
 
 def filter_thought_process(text: str) -> str:
     if not text or not isinstance(text, str):

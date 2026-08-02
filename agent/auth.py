@@ -1,20 +1,17 @@
 import os
-from dotenv import load_dotenv
 import datetime
 from typing import Optional
 import jwt
 from fastapi import Request, HTTPException
 from database import db_helper
 
-load_dotenv(".env.example")  # Load environment variables from .env file
-
 GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
-JWT_SECRET = os.environ.get("JWT_SECRET", "")
+JWT_SECRET = os.environ.get("JWT_SECRET", "super-secret-jwt-key-999")
 JWT_ALGORITHM = "HS256"
 
 # API Token for Roblox Studio & system integrations
-API_SECRET_TOKEN = os.environ.get("API_SECRET_TOKEN", "")
+API_SECRET_TOKEN = os.environ.get("API_SECRET_TOKEN", "super-secret-ide-agent-token-123")
 
 def create_access_token(data: dict, expires_delta: Optional[datetime.timedelta] = None) -> str:
     """Creates a custom signed JSON Web Token (JWT)."""

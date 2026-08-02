@@ -10,19 +10,6 @@ WORKSPACE_DIR = os.environ.get("WORKSPACE_DIR", os.path.abspath(os.path.join(os.
 if os.environ.get("VERCEL"):
     WORKSPACE_DIR = "/tmp/workspace"
 
-ACTIVE_REPO_NAME = None
-
-def get_active_workspace() -> str:
-    """Dynamically resolves the active workspace folder context (root or active cloned repo)."""
-    base_ws = ensure_workspace()
-    global ACTIVE_REPO_NAME
-    if ACTIVE_REPO_NAME:
-        target_path = os.path.abspath(os.path.join(base_ws, ACTIVE_REPO_NAME))
-        if target_path.startswith(base_ws):
-            os.makedirs(target_path, exist_ok=True)
-            return target_path
-    return base_ws
-
 def ensure_workspace():
     """Ensure the workspace directory exists."""
     if not os.path.exists(WORKSPACE_DIR):
@@ -50,7 +37,7 @@ def ensure_workspace():
 
 def clean_path(filepath: str) -> str:
     """Resolve path and ensure it remains inside the workspace directory for basic path containment."""
-    ws = get_active_workspace()
+    ws = ensure_workspace()
 
     # Strip any leading slashes or relative directory prefixes to safely default to root './'
     cleaned = filepath.lstrip("/\\")
@@ -144,7 +131,7 @@ def view_dir_tool(path: str = ".") -> dict:
     if not os.path.exists(target_path):
         return {"status": "error", "message": f"Path '{path}' does not exist."}
 
-    ws = get_active_workspace()
+    ws = ensure_workspace()
     result_tree = []
     try:
         for root, dirs, files in os.walk(target_path):
@@ -167,7 +154,7 @@ def view_dir_tool(path: str = ".") -> dict:
 
 def execute_command_tool(command: str) -> dict:
     """Executes a command inside the workspace directory, with truncated stdout/stderr output."""
-    ws = get_active_workspace()
+    ws = ensure_workspace()
 
     # Intercept and replace CLI git operations with serverless GitHub REST API fallback
     if "git push" in command or "git commit" in command or (shutil.which("git") is None and "git " in command):
@@ -216,8 +203,7 @@ def sync_workspace_to_github_rest(commit_message: str = "Update from MyAgent") -
         import base64
         import httpx
 
-        ws = get_active_workspace()
-        config_path = os.path.join(ws, ".github_config.json")
+        config_path = os.path.join(WORKSPACE_DIR, ".github_config.json")
         if not os.path.exists(config_path):
             return {"status": "error", "message": "No GitHub repository config found. Please clone the repository first."}
 
@@ -237,13 +223,13 @@ def sync_workspace_to_github_rest(commit_message: str = "Update from MyAgent") -
         }
 
         synced_files = []
-        for root, dirs, files in os.walk(ws):
+        for root, dirs, files in os.walk(WORKSPACE_DIR):
             dirs[:] = [d for d in dirs if not d.startswith(".")]
             for file in files:
                 if file == ".github_config.json":
                     continue
                 filepath = os.path.join(root, file)
-                relative_path = os.path.relpath(filepath, ws)
+                relative_path = os.path.relpath(filepath, WORKSPACE_DIR)
 
                 with open(filepath, "rb") as f:
                     local_bytes = f.read()
@@ -347,9 +333,8 @@ def list_directory_tool(path: str = ".") -> dict:
     return view_dir_tool(path)
 
 def clone_repository_tool(repo_url: str) -> dict:
-    """Clones a GitHub repository into a subfolder of the workspace. Sets it as the active repository."""
-    base_ws = ensure_workspace()
-    global ACTIVE_REPO_NAME
+    """Clones a GitHub repository into the workspace. If workspace has content, cleans it up first."""
+    ws = ensure_workspace()
     try:
         if shutil.which("git") is None:
             return {
@@ -357,38 +342,37 @@ def clone_repository_tool(repo_url: str) -> dict:
                 "message": "Git command not found on the system. Please ensure git is installed."
             }
 
-        # Parse repository name
-        match = re.search(r"github\.com/[^/]+/([^/.]+)", repo_url)
-        if match:
-            repo_name = match.group(1)
-            if repo_name.endswith(".git"):
-                repo_name = repo_name[:-4]
-        else:
-            repo_name = "repo-" + str(os.getpid())
-
-        target_dir = os.path.join(base_ws, repo_name)
-        if os.path.exists(target_dir):
+        if os.path.exists(ws):
             try:
-                shutil.rmtree(target_dir)
-            except Exception:
-                pass
+                shutil.rmtree(ws)
+            except Exception as rmtree_err:
+                for root, dirs, files in os.walk(ws, topdown=False):
+                    for name in files:
+                        try:
+                            os.remove(os.path.join(root, name))
+                        except Exception:
+                            pass
+                    for name in dirs:
+                        try:
+                            shutil.rmtree(os.path.join(root, name))
+                        except Exception:
+                            pass
 
-        os.makedirs(target_dir, exist_ok=True)
+        os.makedirs(ws, exist_ok=True)
 
         process = subprocess.run(
             f"git clone {repo_url} .",
             shell=True,
-            cwd=target_dir,
+            cwd=ws,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             timeout=120
         )
         if process.returncode == 0:
-            ACTIVE_REPO_NAME = repo_name
             return {
                 "status": "success",
-                "message": f"Repository '{repo_name}' cloned successfully.",
+                "message": "Repository cloned successfully.",
                 "stdout": truncate_text(process.stdout)
             }
         else:
@@ -405,7 +389,7 @@ git_clone_tool = clone_repository_tool
 
 def git_status_tool() -> dict:
     """Checks git status of the workspace, with truncated output."""
-    ws = get_active_workspace()
+    ws = ensure_workspace()
     if not os.path.exists(os.path.join(ws, ".git")):
         return {"status": "error", "message": "No git repository found in workspace."}
 
@@ -428,7 +412,7 @@ def git_status_tool() -> dict:
 
 def git_rollback_tool() -> dict:
     """Rolls back all uncommitted changes in the workspace, with truncated output."""
-    ws = get_active_workspace()
+    ws = ensure_workspace()
     if not os.path.exists(os.path.join(ws, ".git")):
         return {"status": "error", "message": "No git repository found in workspace."}
 
@@ -460,7 +444,7 @@ def git_rollback_tool() -> dict:
 
 def git_checkout_tool(branch_name: str) -> dict:
     """Switches to an existing branch or creates a new one, with truncated output."""
-    ws = get_active_workspace()
+    ws = ensure_workspace()
     if not os.path.exists(os.path.join(ws, ".git")):
         return {"status": "error", "message": "No git repository found in workspace."}
 
@@ -503,7 +487,7 @@ def git_checkout_tool(branch_name: str) -> dict:
 
 def git_pull_tool() -> dict:
     """Pulls the latest changes from the remote repository, with truncated output."""
-    ws = get_active_workspace()
+    ws = ensure_workspace()
     if not os.path.exists(os.path.join(ws, ".git")):
         return {"status": "error", "message": "No git repository found in workspace."}
 
