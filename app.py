@@ -31,7 +31,8 @@ from agent.tools import (
     read_file_tool, patch_file_tool, view_dir_tool,
     execute_command_tool, clone_repository_tool,
     git_status_tool, git_rollback_tool,
-    write_file_tool, list_directory_tool
+    write_file_tool, list_directory_tool,
+    _write_and_sync_file
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -635,8 +636,7 @@ async def api_upload_file(file: UploadFile = File(...)):
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
 
         content = await file.read()
-        with open(target_path, "wb") as f:
-            f.write(content)
+        _write_and_sync_file(target_path, content, binary=True)
 
         return {"status": "success", "message": f"Successfully uploaded {filename} to workspace."}
     except ValueError as ve:
@@ -699,6 +699,8 @@ async def save_mcp_config_endpoint(req: MCPConfigRequest):
         temp_path = CONFIG_PATH + ".tmp"
         with open(temp_path, "w", encoding="utf-8") as f:
             json.dump(validation["data"], f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(temp_path, CONFIG_PATH)
         return {"status": "success", "message": "MCP configuration saved successfully."}
     except Exception as e:
@@ -771,12 +773,7 @@ async def api_github_clone(req: GitHubCloneRequest):
                             os.makedirs(target_path, exist_ok=True)
                         else:
                             os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                            with open(target_path, "wb") as f:
-                                f.write(z.read(member))
-
-        # Initialize a local git repository so change tracking (git status) works perfectly
-        import shutil
-        import subprocess
+                            _write_and_sync_file(target_path, z.read(member), binary=True)
         if shutil.which("git") is not None:
             try:
                 subprocess.run("git init", shell=True, cwd=target_repo_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -797,8 +794,7 @@ async def api_github_clone(req: GitHubCloneRequest):
             "token": req.token
         }
         config_path = os.path.join(target_repo_dir, ".github_config.json")
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(config_data, f, indent=2)
+        _write_and_sync_file(config_path, json.dumps(config_data, indent=2), binary=False)
 
         # Set active repository name immediately
         import agent.tools as tools
@@ -1076,9 +1072,7 @@ async def api_ide_save_file(req: SaveFileRequest):
         ensure_workspace()
         target_path = clean_path(req.filepath)
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
-
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(req.content)
+        _write_and_sync_file(target_path, req.content, binary=False)
 
         return {"status": "success", "message": f"Successfully saved {req.filepath}"}
     except Exception as e:

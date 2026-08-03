@@ -2,6 +2,9 @@ import os
 import subprocess
 import shutil
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Workspace directory configuration
 WORKSPACE_DIR = os.environ.get("WORKSPACE_DIR", os.path.abspath(os.path.join(os.getcwd(), "workspace")))
@@ -71,6 +74,32 @@ def truncate_text(val: str, max_chars: int = 1000) -> str:
         return val[:max_chars] + "\n...[Truncated]"
     return val
 
+
+def _write_and_sync_file(path: str, content: bytes | str, binary: bool = False, encoding: str = "utf-8") -> None:
+    """Writes file content synchronously to disk and ensures buffers are flushed."""
+    dir_path = os.path.dirname(path)
+    if dir_path:
+        os.makedirs(dir_path, exist_ok=True)
+
+    mode = "wb" if binary else "w"
+    with open(path, mode, encoding=None if binary else encoding) as f:
+        f.write(content)
+        f.flush()
+        os.fsync(f.fileno())
+
+    # Also attempt to sync the parent directory so the file metadata is committed.
+    try:
+        dir_path = os.path.dirname(path) or "."
+        if hasattr(os, "O_DIRECTORY"):
+            dir_fd = os.open(dir_path, os.O_DIRECTORY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+    except Exception as e:
+        logger.debug("Directory fsync skipped or failed: %s", e)
+
+
 def read_file_tool(filepath: str) -> dict:
     """Reads the content of a file relative to the workspace, truncated to 1,000 characters."""
     try:
@@ -99,11 +128,10 @@ def patch_file_tool(filepath: str, search_block: str, replace_block: str) -> dic
     if not os.path.exists(target_path):
         if not search_block:
             try:
-                os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                with open(target_path, "w", encoding="utf-8") as f:
-                    f.write(replace_block)
+                _write_and_sync_file(target_path, replace_block, binary=False)
                 return {"status": "success", "message": f"Created new file '{filepath}' and wrote content."}
             except Exception as e:
+                logger.error("Disk write failed while creating new file %s: %s", filepath, e)
                 return {"status": "error", "message": f"Failed to create file: {str(e)}"}
         return {"status": "error", "message": f"File '{filepath}' not found and cannot be patched without empty search_block."}
 
@@ -112,8 +140,7 @@ def patch_file_tool(filepath: str, search_block: str, replace_block: str) -> dic
             content = f.read()
 
         if not search_block:
-            with open(target_path, "w", encoding="utf-8") as f:
-                f.write(replace_block)
+            _write_and_sync_file(target_path, replace_block, binary=False)
             return {"status": "success", "message": f"Successfully overwrote/wrote file '{filepath}'."}
 
         content_norm = content.replace("\r\n", "\n")
@@ -127,11 +154,11 @@ def patch_file_tool(filepath: str, search_block: str, replace_block: str) -> dic
             }
 
         new_content = content_norm.replace(search_norm, replace_norm, 1)
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(new_content)
+        _write_and_sync_file(target_path, new_content, binary=False)
 
         return {"status": "success", "message": f"Successfully patched '{filepath}'."}
     except Exception as e:
+        logger.error("Disk write failed while patching file %s: %s", filepath, e)
         return {"status": "error", "message": str(e)}
 
 def view_dir_tool(path: str = ".") -> dict:
@@ -335,11 +362,10 @@ def write_file_tool(filepath: str, content: str) -> dict:
         return {"status": "error", "message": str(ve)}
 
     try:
-        os.makedirs(os.path.dirname(target_path), exist_ok=True)
-        with open(target_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        _write_and_sync_file(target_path, content, binary=False)
         return {"status": "success", "message": f"Successfully wrote/overwrote file '{filepath}'."}
     except Exception as e:
+        logger.error("Disk write failed for %s: %s", filepath, e)
         return {"status": "error", "message": f"Failed to write file: {str(e)}"}
 
 def list_directory_tool(path: str = ".") -> dict:
