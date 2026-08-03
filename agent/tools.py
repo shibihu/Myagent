@@ -89,7 +89,11 @@ def patch_file_tool(filepath: str, search_block: str, replace_block: str) -> dic
                 os.makedirs(os.path.dirname(target_path), exist_ok=True)
                 with open(target_path, "w", encoding="utf-8") as f:
                     f.write(replace_block)
-                return {"status": "success", "message": f"Created new file '{filepath}' and wrote content."}
+                    f.flush()
+                    os.fsync(f.fileno())
+                return {"status": "success", "message": f"Created new file '{filepath}', wrote content, and synced to disk."}
+            except PermissionError:
+                return {"status": "error", "message": f"Permission denied creating/writing to file '{filepath}'."}
             except Exception as e:
                 return {"status": "error", "message": f"Failed to create file: {str(e)}"}
         return {"status": "error", "message": f"File '{filepath}' not found and cannot be patched without empty search_block."}
@@ -101,7 +105,9 @@ def patch_file_tool(filepath: str, search_block: str, replace_block: str) -> dic
         if not search_block:
             with open(target_path, "w", encoding="utf-8") as f:
                 f.write(replace_block)
-            return {"status": "success", "message": f"Successfully overwrote/wrote file '{filepath}'."}
+                f.flush()
+                os.fsync(f.fileno())
+            return {"status": "success", "message": f"Successfully overwrote/wrote file '{filepath}' and synced to disk."}
 
         content_norm = content.replace("\r\n", "\n")
         search_norm = search_block.replace("\r\n", "\n")
@@ -116,8 +122,12 @@ def patch_file_tool(filepath: str, search_block: str, replace_block: str) -> dic
         new_content = content_norm.replace(search_norm, replace_norm, 1)
         with open(target_path, "w", encoding="utf-8") as f:
             f.write(new_content)
+            f.flush()
+            os.fsync(f.fileno())
 
-        return {"status": "success", "message": f"Successfully patched '{filepath}'."}
+        return {"status": "success", "message": f"Successfully patched and physically synced '{filepath}' to disk."}
+    except PermissionError:
+        return {"status": "error", "message": f"Permission denied writing/patching to file '{filepath}'."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -324,9 +334,13 @@ def write_file_tool(filepath: str, content: str) -> dict:
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
         with open(target_path, "w", encoding="utf-8") as f:
             f.write(content)
-        return {"status": "success", "message": f"Successfully wrote/overwrote file '{filepath}'."}
+            f.flush()
+            os.fsync(f.fileno())
+        return {"status": "success", "message": f"Successfully wrote/overwrote and physically synced file '{filepath}' to disk."}
+    except PermissionError:
+        return {"status": "error", "message": f"Permission denied writing to file '{filepath}'."}
     except Exception as e:
-        return {"status": "error", "message": f"Failed to write file: {str(e)}"}
+        return {"status": "error", "message": f"Failed to write file '{filepath}': {str(e)}"}
 
 def list_directory_tool(path: str = ".") -> dict:
     """Lists directory structure and contents in the workspace (alias to view_dir_tool)."""

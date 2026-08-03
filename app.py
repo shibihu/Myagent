@@ -996,16 +996,19 @@ async def api_ide_get_file(path: str):
 
 @app.post("/api/ide/file")
 async def api_ide_save_file(req: SaveFileRequest):
-    """Saves content of a specific file into the workspace."""
-    from agent.tools import WORKSPACE_DIR, clean_path, ensure_workspace
+    """Saves content of a specific file into the workspace, forcing physical disk synchronization."""
+    from agent.tools import clean_path
     try:
-        ensure_workspace()
         target_path = clean_path(req.filepath)
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
 
         with open(target_path, "w", encoding="utf-8") as f:
             f.write(req.content)
+            f.flush()
+            os.fsync(f.fileno())
 
-        return {"status": "success", "message": f"Successfully saved {req.filepath}"}
+        return {"status": "success", "message": f"Successfully saved and physically synced {req.filepath} to disk."}
+    except PermissionError:
+        raise HTTPException(status_code=403, detail=f"Permission denied writing to {req.filepath}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Disk write failed: {str(e)}")
