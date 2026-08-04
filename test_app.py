@@ -262,16 +262,17 @@ class AppTests(unittest.TestCase):
         from unittest.mock import patch
         import jwt
         from agent.auth import JWT_SECRET, JWT_ALGORITHM
+        import app
 
         # 1. Test Login Redirect
-        with patch("agent.auth.GITHUB_CLIENT_ID", "mock_id"):
+        with patch("agent.auth.GITHUB_CLIENT_ID", "mock_id"), patch.dict(os.environ, {"GITHUB_CLIENT_ID": "mock_id"}):
             resp = self.client.get("/auth/github/login", follow_redirects=False)
             self.assertEqual(resp.status_code, 307)
             self.assertTrue(resp.headers.get("location").startswith("https://github.com/login/oauth/authorize"))
             self.assertIn("client_id=mock_id", resp.headers.get("location"))
 
         # 2. Test Login Redirect Configuration Error
-        with patch("agent.auth.GITHUB_CLIENT_ID", ""):
+        with patch("agent.auth.GITHUB_CLIENT_ID", ""), patch.dict(os.environ, {"GITHUB_CLIENT_ID": ""}):
             resp = self.client.get("/auth/github/login")
             self.assertEqual(resp.status_code, 500)
 
@@ -305,7 +306,8 @@ class AppTests(unittest.TestCase):
         with patch("httpx.AsyncClient.post", side_effect=mock_httpx_post_and_get), \
              patch("httpx.AsyncClient.get", side_effect=mock_httpx_post_and_get), \
              patch("agent.auth.GITHUB_CLIENT_ID", "mock_id"), \
-             patch("agent.auth.GITHUB_CLIENT_SECRET", "mock_secret"):
+             patch("agent.auth.GITHUB_CLIENT_SECRET", "mock_secret"), \
+             patch.dict(os.environ, {"GITHUB_CLIENT_ID": "mock_id", "GITHUB_CLIENT_SECRET": "mock_secret"}):
 
             # Invoke the callback
             resp = self.client.get("/auth/github/callback?code=mock_code", follow_redirects=False)
@@ -528,6 +530,96 @@ class AppTests(unittest.TestCase):
             # The token MUST be masked
             self.assertNotIn("ghp_mock_token_123", data["message"])
             self.assertIn("https://***@", data["message"])
+
+
+# === SSH MANAGER & TERMINAL SESSIONS TESTS ===
+
+class TerminalAndSSHTests(unittest.TestCase):
+    def test_ssh_manager_crud_and_encryption(self):
+        """Test that SSH Manager encrypts credentials, redacts them on list, and decrypts them correctly."""
+        from backend.ssh_manager import (
+            create_ssh_server, list_ssh_servers, get_ssh_server_decrypted,
+            update_ssh_server, delete_ssh_server
+        )
+        # Create a mock SSH server
+        test_data = {
+            "nickname": "Test Server",
+            "host": "localhost",
+            "port": 2222,
+            "username": "test_user",
+            "auth_method": "password",
+            "password": "my_super_secret_password",
+            "private_key": "private_key_content",
+            "passphrase": "my_passphrase"
+        }
+
+        # 1. Create SSH Server
+        server = create_ssh_server(test_data)
+        self.assertIsNotNone(server["id"])
+        self.assertEqual(server["nickname"], "Test Server")
+        self.assertEqual(server["host"], "localhost")
+        self.assertEqual(server["port"], 2222)
+        # Verify credentials are redacted/masked in list output
+        self.assertTrue(server["has_password"])
+        self.assertTrue(server["has_private_key"])
+        self.assertTrue(server["has_passphrase"])
+        self.assertNotIn("password", server)
+        self.assertNotIn("private_key", server)
+
+        # 2. Retrieve Decrypted Configuration
+        decrypted = get_ssh_server_decrypted(server["id"])
+        self.assertEqual(decrypted["password"], "my_super_secret_password")
+        self.assertEqual(decrypted["private_key"], "private_key_content")
+        self.assertEqual(decrypted["passphrase"], "my_passphrase")
+
+        # 3. List configurations
+        listings = list_ssh_servers()
+        matched = [s for s in listings if s["id"] == server["id"]]
+        self.assertEqual(len(matched), 1)
+        self.assertNotIn("password", matched[0])
+
+        # 4. Update configurations (partial)
+        updated = update_ssh_server(server["id"], {"nickname": "New Name", "password": "new_password"})
+        self.assertEqual(updated["nickname"], "New Name")
+
+        decrypted_updated = get_ssh_server_decrypted(server["id"])
+        self.assertEqual(decrypted_updated["nickname"], "New Name")
+        self.assertEqual(decrypted_updated["password"], "new_password")
+        # Ensure unchanged credentials stay intact
+        self.assertEqual(decrypted_updated["private_key"], "private_key_content")
+
+        # 5. Delete configuration
+        success = delete_ssh_server(server["id"])
+        self.assertTrue(success)
+        self.assertIsNone(get_ssh_server_decrypted(server["id"]))
+
+    def test_terminal_manager_local_session(self):
+        """Test local PTY terminal session lifecycle."""
+        from backend.terminal_manager import terminal_manager
+        import asyncio
+
+        # We can run async operations in our unittest
+        async def run_test():
+            outputs = []
+            def on_output(data):
+                outputs.append(data)
+
+            sess = await terminal_manager.create_session(
+                session_id="test_local_session",
+                on_output=on_output
+            )
+            self.assertTrue(sess.is_alive())
+
+            # Write a command (e.g. echo)
+            await sess.write("echo 'Hello Terminal'\n")
+            await asyncio.sleep(0.5)
+
+            # Close session
+            await terminal_manager.close_session("test_local_session")
+            self.assertFalse(sess.is_alive())
+
+        asyncio.run(run_test())
+
 
 if __name__ == "__main__":
     unittest.main()

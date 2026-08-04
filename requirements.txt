@@ -11,3 +11,5 @@ asyncpg
 pyjwt
 sqlalchemy
 psycopg2-binary
+asyncssh
+websockets
