@@ -153,19 +153,20 @@
     {% raw %}
         const { useState, useEffect, useRef } = React;
 
-        const XtermTerminal = () => {
+        const TerminalInstance = ({ tabId, serverId, isActive, isMobile }) => {
             const terminalRef = useRef(null);
             const xtermInstance = useRef(null);
+            const wsRef = useRef(null);
             const fitAddonInstance = useRef(null);
 
             useEffect(() => {
                 if (!terminalRef.current) return;
 
-                // Initialize Xterm.js Terminal
+                // Create terminal
                 const term = new Terminal({
                     cursorBlink: true,
-                    fontSize: 12,
-                    fontFamily: 'Courier New, monospace',
+                    fontSize: isMobile ? 11 : 12,
+                    fontFamily: 'Fira Code, Courier New, monospace',
                     theme: {
                         background: '#18181c',
                         foreground: '#ffffff'
@@ -176,104 +177,522 @@
                 const fitAddon = new FitAddon.FitAddon();
                 fitAddonInstance.current = fitAddon;
                 term.loadAddon(fitAddon);
-
                 term.open(terminalRef.current);
-                // Delay fit slightly to let DOM render completely
+
                 setTimeout(() => {
+                    try { fitAddon.fit(); } catch(e) {}
+                }, 150);
+
+                // Bind focus on click/touch
+                const triggerFocus = () => term.focus();
+                terminalRef.current.addEventListener('click', triggerFocus);
+                terminalRef.current.addEventListener('touchend', triggerFocus);
+
+                // Resize handler
+                const handleResize = () => {
                     try {
                         fitAddon.fit();
-                    } catch (e) {
-                        console.warn("FitAddon.fit failed initially:", e);
-                    }
-                }, 100);
-
-                // Check if Electron context is active
-                if (window.terminalAPI) {
-                    term.onData(data => {
-                        window.terminalAPI.sendData(data);
-                    });
-
-                    window.terminalAPI.onData(data => {
-                        term.write(data);
-                    });
-
-                    // Notify main process of initial size
-                    setTimeout(() => {
-                        try {
-                            const dims = fitAddon.proposeDimensions();
-                            if (dims) {
+                        const dims = fitAddon.proposeDimensions();
+                        if (dims) {
+                            if (window.terminalAPI) {
                                 window.terminalAPI.resize(dims.cols, dims.rows);
+                            } else if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                                wsRef.current.send(JSON.stringify({
+                                    action: "resize",
+                                    cols: dims.cols,
+                                    rows: dims.rows
+                                }));
                             }
-                        } catch (e) {
-                            console.error(e);
                         }
+                    } catch (e) {}
+                };
+                window.addEventListener('resize', handleResize);
+
+                // Connection initialization
+                if (window.terminalAPI) {
+                    // Electron mode
+                    term.onData(data => window.terminalAPI.sendData(data));
+                    window.terminalAPI.onData(data => term.write(data));
+                    setTimeout(() => {
+                        const dims = fitAddon.proposeDimensions();
+                        if (dims) window.terminalAPI.resize(dims.cols, dims.rows);
                     }, 200);
-
-                    // Resize handler
-                    const handleResize = () => {
-                        try {
-                            fitAddon.fit();
-                            const resizedDims = fitAddon.proposeDimensions();
-                            if (resizedDims) {
-                                window.terminalAPI.resize(resizedDims.cols, resizedDims.rows);
-                            }
-                        } catch (e) {
-                            console.error(e);
-                        }
-                    };
-                    window.addEventListener('resize', handleResize);
-
-                    return () => {
-                        window.removeEventListener('resize', handleResize);
-                        term.dispose();
-                    };
                 } else {
-                    // Fallback interactive command terminal in web browser mode
-                    term.writeln('\x1b[1;36m[MyAgent Web Console Mode]\x1b[0m');
-                    term.writeln('Real terminal access requires running inside Electron container.');
-                    term.writeln('Running simple web command fallback shell...\r\n');
-                    term.write('$ ');
+                    // Web / WebSocket mode
+                    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+                    const getCookie = (name) => {
+                        const value = `; ${document.cookie}`;
+                        const parts = value.split(`; ${name}=`);
+                        if (parts.length === 2) return parts.pop().split(';').shift();
+                        return null;
+                    };
+                    const token = getCookie("access_token");
+                    const wsUrl = `${protocol}//${window.location.host}/ws/terminal${token ? `?token=${token}` : ""}`;
 
-                    let currentLine = '';
+                    const ws = new WebSocket(wsUrl);
+                    wsRef.current = ws;
+
+                    ws.onopen = () => {
+                        const dims = fitAddon.proposeDimensions() || { cols: 80, rows: 24 };
+                        ws.send(JSON.stringify({
+                            action: "connect",
+                            session_id: tabId,
+                            server_id: serverId,
+                            cols: dims.cols,
+                            rows: dims.rows
+                        }));
+                    };
+
+                    ws.onmessage = (e) => {
+                        try {
+                            const msg = JSON.parse(e.data);
+                            if (msg.action === "output") {
+                                term.write(msg.data);
+                            } else if (msg.action === "error") {
+                                term.writeln(`\r\n\x1b[1;31m[WebSocket Error]: ${msg.message}\x1b[0m\r\n`);
+                            }
+                        } catch (err) {}
+                    };
+
+                    ws.onclose = () => {
+                        term.writeln("\r\n\x1b[1;33m[Terminal Session Disconnected]\x1b[0m\r\n");
+                    };
 
                     term.onData(data => {
-                        const code = data.charCodeAt(0);
-                        if (code === 13) { // Enter
-                            term.write('\r\n');
-                            if (currentLine.trim()) {
-                                term.writeln(`Executing mock command: ${currentLine}`);
-                                term.writeln('Output: Command execution simulated in web sandbox.');
-                            }
-                            currentLine = '';
-                            term.write('$ ');
-                        } else if (code === 127) { // Backspace
-                            if (currentLine.length > 0) {
-                                currentLine = currentLine.slice(0, -1);
-                                term.write('\b \b');
-                            }
-                        } else {
-                            currentLine += data;
-                            term.write(data);
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ action: "input", data: data }));
                         }
                     });
 
-                    const handleResize = () => {
-                        try {
-                            fitAddon.fit();
-                        } catch (e) {
-                            console.warn("FitAddon.fit failed on resize:", e);
+                    // Heartbeat loop
+                    const hb = setInterval(() => {
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ action: "heartbeat" }));
                         }
-                    };
-                    window.addEventListener('resize', handleResize);
+                    }, 20000);
 
                     return () => {
+                        clearInterval(hb);
                         window.removeEventListener('resize', handleResize);
+                        if (terminalRef.current) {
+                            terminalRef.current.removeEventListener('click', triggerFocus);
+                            terminalRef.current.removeEventListener('touchend', triggerFocus);
+                        }
+                        if (ws) ws.close();
                         term.dispose();
                     };
                 }
+
+                return () => {
+                    window.removeEventListener('resize', handleResize);
+                    if (terminalRef.current) {
+                        terminalRef.current.removeEventListener('click', triggerFocus);
+                        terminalRef.current.removeEventListener('touchend', triggerFocus);
+                    }
+                    term.dispose();
+                };
+            }, [tabId, serverId]);
+
+            // Re-fit when becoming active
+            useEffect(() => {
+                if (isActive && fitAddonInstance.current) {
+                    setTimeout(() => {
+                        try {
+                            fitAddonInstance.current.fit();
+                            const dims = fitAddonInstance.current.proposeDimensions();
+                            if (dims && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                                wsRef.current.send(JSON.stringify({
+                                    action: "resize",
+                                    cols: dims.cols,
+                                    rows: dims.rows
+                                }));
+                            }
+                        } catch(e) {}
+                    }, 100);
+                }
+            }, [isActive]);
+
+            return (
+                <div
+                    ref={terminalRef}
+                    className="w-full h-full bg-[#18181c] overflow-hidden"
+                    style={{ display: isActive ? 'block' : 'none', minHeight: '120px' }}
+                />
+            );
+        };
+
+        const XtermTerminal = ({ isMobile }) => {
+            const [termTabs, setTermTabs] = useState([
+                { id: "local-default", name: "Local Shell", server_id: null }
+            ]);
+            const [activeTabId, setActiveTabId] = useState("local-default");
+            const [sshServers, setSshServers] = useState([]);
+            const [showSshModal, setShowSshModal] = useState(false);
+            const [showAddMenu, setShowAddMenu] = useState(false);
+            const [showAddServerForm, setShowAddServerForm] = useState(false);
+            const [newServer, setNewServer] = useState({
+                nickname: "", host: "", port: 22, username: "", auth_method: "password",
+                password: "", private_key: "", passphrase: ""
+            });
+            const [editingServerId, setEditingServerId] = useState(null);
+
+            const fetchSshServers = () => {
+                fetch("/api/ssh/servers")
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.status === "success") {
+                            setSshServers(data.servers || []);
+                        }
+                    })
+                    .catch(err => console.error("Failed to load SSH servers", err));
+            };
+
+            useEffect(() => {
+                fetchSshServers();
             }, []);
 
-            return <div ref={terminalRef} className="w-full h-full bg-[#18181c] overflow-hidden" style={{ minHeight: '120px' }} />;
+            const handleCloseTab = (id) => {
+                const filtered = termTabs.filter(t => t.id !== id);
+                setTermTabs(filtered);
+                if (activeTabId === id && filtered.length > 0) {
+                    setActiveTabId(filtered[filtered.length - 1].id);
+                }
+            };
+
+            const addNewTab = (serverId, name) => {
+                const newId = `term-${Date.now()}`;
+                setTermTabs([...termTabs, { id: newId, name: name, server_id: serverId }]);
+                setActiveTabId(newId);
+            };
+
+            const handleSaveServer = (e) => {
+                e.preventDefault();
+                const method = editingServerId ? "PUT" : "POST";
+                const url = editingServerId ? `/api/ssh/servers/${editingServerId}` : "/api/ssh/servers";
+
+                fetch(url, {
+                    method: method,
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(newServer)
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === "success") {
+                        fetchSshServers();
+                        setShowAddServerForm(false);
+                        setEditingServerId(null);
+                        setNewServer({
+                            nickname: "", host: "", port: 22, username: "", auth_method: "password",
+                            password: "", private_key: "", passphrase: ""
+                        });
+                    } else {
+                        alert("Failed to save SSH server: " + (data.message || "Unknown error"));
+                    }
+                })
+                .catch(err => console.error(err));
+            };
+
+            const handleDeleteServer = (id) => {
+                if (!confirm("Are you sure you want to delete this SSH server configuration?")) return;
+                fetch(`/api/ssh/servers/${id}`, { method: "DELETE" })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.status === "success") {
+                            fetchSshServers();
+                        }
+                    });
+            };
+
+            const handleEditServer = (srv) => {
+                setEditingServerId(srv.id);
+                setNewServer({
+                    nickname: srv.nickname,
+                    host: srv.host,
+                    port: srv.port,
+                    username: srv.username,
+                    auth_method: srv.auth_method,
+                    password: "",
+                    private_key: "",
+                    passphrase: ""
+                });
+                setShowAddServerForm(true);
+            };
+
+            return (
+                <div className="w-full h-full flex flex-col bg-[#18181c] relative">
+                    {/* Tabs bar */}
+                    <div className="h-8 bg-[#131313] border-b border-borderCol flex items-center justify-between px-2 text-xs flex-shrink-0 z-10">
+                        <div className="flex items-center space-x-1.5 overflow-x-auto scrollbar-none">
+                            {termTabs.map(tab => (
+                                <div
+                                    key={tab.id}
+                                    onClick={() => setActiveTabId(tab.id)}
+                                    className={`px-3 py-1 rounded-t flex items-center space-x-1.5 cursor-pointer transition-colors ${activeTabId === tab.id ? 'bg-[#18181c] text-white border-t-2 border-brandBlue font-semibold' : 'text-gray-400 hover:text-gray-200'}`}
+                                >
+                                    <i className={tab.server_id ? "fa-solid fa-server text-[10px] text-brandBlue" : "fa-solid fa-terminal text-[10px]"}></i>
+                                    <span>{tab.name}</span>
+                                    {termTabs.length > 1 && (
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); handleCloseTab(tab.id); }}
+                                            className="hover:bg-gray-700/50 hover:text-white rounded-full p-0.5 text-[8px]"
+                                        >
+                                            <i className="fa-solid fa-xmark"></i>
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                            {/* New Tab Dropdown */}
+                            <div className="relative">
+                                <button
+                                    onClick={() => setShowAddMenu(!showAddMenu)}
+                                    className="hover:bg-surfaceBg text-gray-400 hover:text-white p-1 rounded"
+                                    title="Open new session"
+                                >
+                                    <i className="fa-solid fa-plus"></i>
+                                </button>
+                                {showAddMenu && (
+                                    <div className="absolute left-0 bottom-7 bg-[#1e1e1e] border border-borderCol rounded shadow-lg py-1.5 z-50 min-w-[140px] text-[11px]">
+                                        <button
+                                            onClick={() => { addNewTab(null, "Local Shell"); setShowAddMenu(false); }}
+                                            className="w-full text-left px-3 py-1.5 hover:bg-surfaceBg flex items-center space-x-2 text-gray-300 hover:text-white"
+                                        >
+                                            <i className="fa-solid fa-terminal"></i>
+                                            <span>Local Shell</span>
+                                        </button>
+                                        {sshServers.map(srv => (
+                                            <button
+                                                key={srv.id}
+                                                onClick={() => { addNewTab(srv.id, srv.nickname || srv.host); setShowAddMenu(false); }}
+                                                className="w-full text-left px-3 py-1.5 hover:bg-surfaceBg flex items-center space-x-2 text-gray-300 hover:text-white truncate"
+                                            >
+                                                <i className="fa-solid fa-server text-brandBlue"></i>
+                                                <span>{srv.nickname || srv.host}</span>
+                                            </button>
+                                        ))}
+                                        <div className="border-t border-borderCol my-1"></div>
+                                        <button
+                                            onClick={() => { setShowSshModal(true); setShowAddMenu(false); }}
+                                            className="w-full text-left px-3 py-1.5 hover:bg-surfaceBg flex items-center space-x-2 text-brandBlue font-medium"
+                                        >
+                                            <i className="fa-solid fa-gear"></i>
+                                            <span>Manage SSH...</span>
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        {/* SSH Manager button */}
+                        <button
+                            onClick={() => setShowSshModal(true)}
+                            className="text-gray-400 hover:text-white hover:bg-[#18181c] px-2 py-1 rounded"
+                            title="Manage SSH Connections"
+                        >
+                            <i className="fa-solid fa-gears text-sm"></i>
+                        </button>
+                    </div>
+
+                    {/* Terminal instances multiplexed container */}
+                    <div className="flex-1 min-h-0 w-full relative">
+                        {termTabs.map(tab => (
+                            <TerminalInstance
+                                key={tab.id}
+                                tabId={tab.id}
+                                serverId={tab.server_id}
+                                isActive={activeTabId === tab.id}
+                                isMobile={isMobile}
+                            />
+                        ))}
+                    </div>
+
+                    {/* SSH Server Manager Modal */}
+                    {showSshModal && (
+                        <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4">
+                            <div className="bg-[#18181c] border border-borderCol rounded-lg w-full max-w-xl p-5 space-y-4 max-h-[85dvh] overflow-y-auto">
+                                <div className="flex items-center justify-between border-b border-borderCol pb-3">
+                                    <span className="font-bold text-sm text-brandBlue flex items-center space-x-2">
+                                        <i className="fa-solid fa-gears"></i>
+                                        <span>SSH Connections Manager</span>
+                                    </span>
+                                    <button onClick={() => setShowSshModal(false)} className="text-gray-500 hover:text-white text-base">✕</button>
+                                </div>
+
+                                {!showAddServerForm ? (
+                                    <div className="space-y-4">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-xs text-gray-400">Save remote SSH credentials securely (fully encrypted).</span>
+                                            <button
+                                                onClick={() => { setEditingServerId(null); setShowAddServerForm(true); }}
+                                                className="bg-brandBlue hover:bg-blue-600 text-white text-xs font-semibold py-1.5 px-3 rounded flex items-center space-x-1.5 shadow"
+                                            >
+                                                <i className="fa-solid fa-plus"></i>
+                                                <span>Add Server</span>
+                                            </button>
+                                        </div>
+
+                                        {sshServers.length === 0 ? (
+                                            <div className="text-center py-12 border border-dashed border-borderCol rounded space-y-2 text-gray-500 text-xs">
+                                                <i className="fa-solid fa-server text-3xl"></i>
+                                                <p>No remote SSH servers added yet.</p>
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                {sshServers.map(srv => (
+                                                    <div key={srv.id} className="p-3 bg-surfaceBg rounded border border-borderCol flex justify-between items-center text-xs">
+                                                        <div className="space-y-0.5 max-w-[70%]">
+                                                            <div className="font-bold text-white flex items-center space-x-1.5">
+                                                                <i className="fa-solid fa-server text-brandBlue"></i>
+                                                                <span>{srv.nickname || "No Nickname"}</span>
+                                                            </div>
+                                                            <div className="text-[10px] text-gray-400 truncate">
+                                                                {srv.username}@{srv.host}:{srv.port}
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center space-x-2">
+                                                            <button
+                                                                onClick={() => { addNewTab(srv.id, srv.nickname || srv.host); setShowSshModal(false); }}
+                                                                className="text-xs bg-green-600/20 hover:bg-green-600 text-green-400 hover:text-white py-1 px-2.5 rounded transition-colors"
+                                                                title="Connect in new tab"
+                                                            >
+                                                                Connect
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleEditServer(srv)}
+                                                                className="text-gray-400 hover:text-white hover:bg-gray-700 p-1 rounded"
+                                                            >
+                                                                <i className="fa-solid fa-pencil"></i>
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleDeleteServer(srv.id)}
+                                                                className="text-red-400 hover:text-red-300 hover:bg-red-500/10 p-1 rounded"
+                                                            >
+                                                                <i className="fa-solid fa-trash-can"></i>
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <form onSubmit={handleSaveServer} className="space-y-3.5 text-xs">
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="space-y-1">
+                                                <label className="text-gray-400 font-semibold">Nickname</label>
+                                                <input
+                                                    type="text"
+                                                    required
+                                                    value={newServer.nickname}
+                                                    onChange={e => setNewServer({...newServer, nickname: e.target.value})}
+                                                    placeholder="e.g. Production VM"
+                                                    className="w-full bg-[#131313] border border-borderCol rounded p-2 text-white focus:outline-none focus:border-brandBlue"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-gray-400 font-semibold">Host / IP</label>
+                                                <input
+                                                    type="text"
+                                                    required
+                                                    value={newServer.host}
+                                                    onChange={e => setNewServer({...newServer, host: e.target.value})}
+                                                    placeholder="e.g. 192.168.1.10 or ssh.site.com"
+                                                    className="w-full bg-[#131313] border border-borderCol rounded p-2 text-white focus:outline-none focus:border-brandBlue"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-3 gap-3">
+                                            <div className="space-y-1">
+                                                <label className="text-gray-400 font-semibold">Port</label>
+                                                <input
+                                                    type="number"
+                                                    required
+                                                    value={newServer.port}
+                                                    onChange={e => setNewServer({...newServer, port: parseInt(e.target.value) || 22})}
+                                                    placeholder="22"
+                                                    className="w-full bg-[#131313] border border-borderCol rounded p-2 text-white focus:outline-none focus:border-brandBlue"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-gray-400 font-semibold">Username</label>
+                                                <input
+                                                    type="text"
+                                                    required
+                                                    value={newServer.username}
+                                                    onChange={e => setNewServer({...newServer, username: e.target.value})}
+                                                    placeholder="root"
+                                                    className="w-full bg-[#131313] border border-borderCol rounded p-2 text-white focus:outline-none focus:border-brandBlue"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-gray-400 font-semibold">Auth Method</label>
+                                                <select
+                                                    value={newServer.auth_method}
+                                                    onChange={e => setNewServer({...newServer, auth_method: e.target.value})}
+                                                    className="w-full bg-[#131313] border border-borderCol rounded p-2 text-white focus:outline-none focus:border-brandBlue cursor-pointer"
+                                                >
+                                                    <option value="password">Password</option>
+                                                    <option value="private_key">Private Key</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        {newServer.auth_method === "password" ? (
+                                            <div className="space-y-1">
+                                                <label className="text-gray-400 font-semibold">Password</label>
+                                                <input
+                                                    type="password"
+                                                    value={newServer.password}
+                                                    onChange={e => setNewServer({...newServer, password: e.target.value})}
+                                                    placeholder={editingServerId ? "•••••••• (Leave blank to keep unchanged)" : "Enter password"}
+                                                    className="w-full bg-[#131313] border border-borderCol rounded p-2 text-white focus:outline-none focus:border-brandBlue"
+                                                />
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-3">
+                                                <div className="space-y-1">
+                                                    <label className="text-gray-400 font-semibold">Private Key (PEM or OpenSSH ED25519 format)</label>
+                                                    <textarea
+                                                        value={newServer.private_key}
+                                                        onChange={e => setNewServer({...newServer, private_key: e.target.value})}
+                                                        placeholder={editingServerId ? "PEM key loaded. (Leave blank to keep unchanged)" : "-----BEGIN OPENSSH PRIVATE KEY-----\n..."}
+                                                        className="w-full bg-[#131313] border border-borderCol rounded p-2 text-white focus:outline-none focus:border-brandBlue h-24 font-mono text-[10px]"
+                                                    />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <label className="text-gray-400 font-semibold">Private Key Passphrase (optional)</label>
+                                                    <input
+                                                        type="password"
+                                                        value={newServer.passphrase}
+                                                        onChange={e => setNewServer({...newServer, passphrase: e.target.value})}
+                                                        placeholder="Passphrase"
+                                                        className="w-full bg-[#131313] border border-borderCol rounded p-2 text-white focus:outline-none focus:border-brandBlue"
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <div className="flex justify-end space-x-3 pt-3">
+                                            <button
+                                                type="button"
+                                                onClick={() => { setShowAddServerForm(false); setEditingServerId(null); }}
+                                                className="bg-surfaceBg hover:bg-gray-800 text-xs py-2 px-4 rounded border border-borderCol font-semibold"
+                                            >
+                                                Back
+                                            </button>
+                                            <button
+                                                type="submit"
+                                                className="bg-brandBlue hover:bg-blue-600 text-xs py-2 px-4 rounded font-bold text-white shadow"
+                                            >
+                                                {editingServerId ? "Update Server" : "Save Server"}
+                                            </button>
+                                        </div>
+                                    </form>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
         };
 
         const FileNode = ({ node, activeTab, onSelectFile, expandedFolders, onToggleFolder, gitChanges, isMobile, setMobileView }) => {
@@ -1606,7 +2025,7 @@
                                 )}
 
                                 {/* Bottom Resizable Tabbed Panel */}
-                                <div class="h-36 bg-panelBg border-t border-borderCol flex flex-col flex-shrink-0">
+                                <div class="h-52 bg-panelBg border-t border-borderCol flex flex-col flex-shrink-0">
                                     <div class="h-8 border-b border-borderCol flex items-center justify-between px-4 text-xs font-semibold bg-panelBg">
                                         <div class="flex space-x-4">
                                             {["Terminal", "Output"].map(t => (

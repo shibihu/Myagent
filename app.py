@@ -1077,3 +1077,69 @@ async def api_ide_save_file(req: SaveFileRequest):
         return {"status": "success", "message": f"Successfully saved {req.filepath}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ==============================================================================
+# SSH & WEBSOCKET TERMINAL INTEGRATION
+# ==============================================================================
+
+from backend.websocket_terminal import router as websocket_router
+import backend.ssh_manager as ssh_mgr
+
+app.include_router(websocket_router)
+
+class SSHServerRequest(BaseModel):
+    nickname: Optional[str] = ""
+    host: str
+    port: Optional[int] = 22
+    username: str
+    auth_method: Optional[str] = "password"
+    password: Optional[str] = None
+    private_key: Optional[str] = None
+    passphrase: Optional[str] = None
+
+class SSHServerUpdate(BaseModel):
+    nickname: Optional[str] = None
+    host: Optional[str] = None
+    port: Optional[int] = None
+    username: Optional[str] = None
+    auth_method: Optional[str] = None
+    password: Optional[str] = None
+    private_key: Optional[str] = None
+    passphrase: Optional[str] = None
+
+@app.get("/api/ssh/servers")
+async def api_list_ssh_servers():
+    """Returns list of configured SSH servers with sensitive credentials masked."""
+    return {"status": "success", "servers": ssh_mgr.list_ssh_servers()}
+
+@app.post("/api/ssh/servers")
+async def api_create_ssh_server(req: SSHServerRequest):
+    """Saves a new SSH server configuration encrypted in backend storage."""
+    try:
+        server = ssh_mgr.create_ssh_server(req.dict())
+        return {"status": "success", "server": server}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/ssh/servers/{server_id}")
+async def api_update_ssh_server(server_id: str, req: SSHServerUpdate):
+    """Updates an existing SSH server configuration."""
+    try:
+        # Filter out None values to avoid overwriting existing fields accidentally
+        update_data = {k: v for k, v in req.dict().items() if v is not None}
+        server = ssh_mgr.update_ssh_server(server_id, update_data)
+        if not server:
+            raise HTTPException(status_code=404, detail="SSH server not found.")
+        return {"status": "success", "server": server}
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/ssh/servers/{server_id}")
+async def api_delete_ssh_server(server_id: str):
+    """Deletes an SSH server configuration."""
+    success = ssh_mgr.delete_ssh_server(server_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="SSH server not found.")
+    return {"status": "success", "message": "SSH server deleted successfully."}

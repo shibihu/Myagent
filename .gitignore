@@ -9,6 +9,8 @@ node_modules/
 # Local JSON Databases (ประวัติแชทและความจำ)
 chats.json
 memory.json
+ssh_servers.json
+.encryption_key
 
 
 node_modules/
