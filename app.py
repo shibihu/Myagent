@@ -1118,6 +1118,8 @@ async def api_create_ssh_server(req: SSHServerRequest):
     try:
         server = ssh_mgr.create_ssh_server(req.dict())
         return {"status": "success", "server": server}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1131,6 +1133,8 @@ async def api_update_ssh_server(server_id: str, req: SSHServerUpdate):
         if not server:
             raise HTTPException(status_code=404, detail="SSH server not found.")
         return {"status": "success", "server": server}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         if isinstance(e, HTTPException):
             raise e

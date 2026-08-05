@@ -365,6 +365,37 @@
                 setActiveTabId(newId);
             };
 
+            const parseHostAndPort = (rawHost) => {
+                if (!rawHost) return;
+                let parsedHost = rawHost.trim();
+
+                // Strip protocols: e.g. tcp://, ssh://, http://, https://
+                const protocolMatch = parsedHost.match(/^(?:[a-zA-Z0-9+.-]+:\/\/)?(.*)/);
+                if (protocolMatch && protocolMatch[1]) {
+                    parsedHost = protocolMatch[1];
+                }
+
+                // Extract port suffix: e.g. split ":33183"
+                let parsedPort = newServer.port;
+                if (parsedHost.includes(":")) {
+                    const parts = parsedHost.split(":");
+                    parsedHost = parts[0];
+                    const possiblePort = parseInt(parts[1], 10);
+                    if (!isNaN(possiblePort)) {
+                        parsedPort = possiblePort;
+                    }
+                }
+
+                // Trim trailing dots and spaces
+                parsedHost = parsedHost.replace(/\.+$/, "").trim();
+
+                setNewServer(prev => ({
+                    ...prev,
+                    host: parsedHost,
+                    port: parsedPort
+                }));
+            };
+
             const handleSaveServer = (e) => {
                 e.preventDefault();
                 const method = editingServerId ? "PUT" : "POST";
@@ -386,7 +417,7 @@
                             password: "", private_key: "", passphrase: ""
                         });
                     } else {
-                        alert("Failed to save SSH server: " + (data.message || "Unknown error"));
+                        alert("Failed to save SSH server: " + (data.detail || data.message || "Unknown error"));
                     }
                 })
                 .catch(err => console.error(err));
@@ -594,6 +625,7 @@
                                                     required
                                                     value={newServer.host}
                                                     onChange={e => setNewServer({...newServer, host: e.target.value})}
+                                                    onBlur={e => parseHostAndPort(e.target.value)}
                                                     placeholder="e.g. 192.168.1.10 or ssh.site.com"
                                                     className="w-full bg-[#131313] border border-borderCol rounded p-2 text-white focus:outline-none focus:border-brandBlue"
                                                 />
