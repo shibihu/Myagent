@@ -620,6 +620,45 @@ class TerminalAndSSHTests(unittest.TestCase):
 
         asyncio.run(run_test())
 
+    def test_host_validation_rules(self):
+        """Verify host format validation and clear API error delivery."""
+        from backend.ssh_manager import validate_host
+
+        # 1. Test good hosts
+        validate_host("localhost")
+        validate_host("127.0.0.1")
+        validate_host("hikum-159-192-220-245.run.pinggy-free")
+        validate_host("google.com")
+
+        # 2. Test bad hosts trigger ValueError
+        with self.assertRaises(ValueError):
+            validate_host("")
+        with self.assertRaises(ValueError):
+            validate_host("tcp://1.1.1.1")
+        with self.assertRaises(ValueError):
+            validate_host("ssh://site.com")
+        with self.assertRaises(ValueError):
+            validate_host("site.com:22")
+        with self.assertRaises(ValueError):
+            validate_host("site..com")
+        with self.assertRaises(ValueError):
+            validate_host("site.com.")
+
+        # 3. Test API bad request on invalid host save
+        from fastapi.testclient import TestClient
+        import app
+        client = TestClient(app.app)
+
+        bad_payload = {
+            "nickname": "Bad Server",
+            "host": "tcp://my-bad-host.com:123",
+            "port": 2222,
+            "username": "root"
+        }
+        resp = client.post("/api/ssh/servers", json=bad_payload)
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("Host address must not contain a protocol prefix", resp.json()["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -69,6 +69,47 @@ def save_ssh_servers(servers: Dict[str, dict]) -> None:
             except Exception:
                 pass
 
+import re
+
+def validate_host(host: str) -> None:
+    """
+    Validates a hostname or IP address. Throws ValueError if invalid.
+    """
+    if not host:
+        raise ValueError("Host address cannot be empty.")
+
+    trimmed = host.strip()
+
+    # Exclude protocol prefixes (should have been stripped by frontend, but prevent backend entry)
+    if re.match(r'^[a-zA-Z0-9+.-]+://', trimmed):
+        raise ValueError("Host address must not contain a protocol prefix (e.g. 'tcp://' or 'ssh://').")
+
+    # Exclude ports (should have been separated)
+    if ":" in trimmed:
+        raise ValueError("Host address must not contain a port suffix (e.g. ':33183'). Enter the port separately.")
+
+    # Check for trailing dots or empty labels
+    if trimmed.endswith(".") or ".." in trimmed:
+        raise ValueError("Host address has an invalid format (trailing dot or consecutive dots).")
+
+    # Standard Hostname / IP address validation
+    # Allowed: letters, numbers, hyphens, dots
+    hostname_regex = re.compile(
+        r'^('
+        r'(localhost)|' # localhost
+        r'(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)*([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])' # domains
+        r')$'
+    )
+
+    ipv4_regex = re.compile(
+        r'^((25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[0-1]?[0-9][0-9]?)$'
+    )
+
+    ipv6_regex = re.compile(r'^([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}$|^([0-9a-fA-F]{1,4}:){1,7}:$|^([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}$')
+
+    if not (hostname_regex.match(trimmed) or ipv4_regex.match(trimmed) or ipv6_regex.match(trimmed) or trimmed == "localhost"):
+        raise ValueError("Host address format is invalid. Must be a valid IP address or domain hostname (e.g. '192.168.1.1' or 'ssh.site.com').")
+
 def get_masked_server(server_id: str, server_data: dict) -> dict:
     """Returns a server profile with sensitive credential fields redacted/masked."""
     return {
@@ -85,12 +126,13 @@ def get_masked_server(server_id: str, server_data: dict) -> dict:
 
 def create_ssh_server(data: dict) -> dict:
     """Creates a new SSH server configuration, encrypting credentials."""
+    validate_host(data.get("host", ""))
     servers = load_ssh_servers()
     server_id = str(uuid.uuid4())
 
     server_record = {
         "nickname": data.get("nickname", ""),
-        "host": data.get("host", ""),
+        "host": data.get("host", "").strip(),
         "port": int(data.get("port", 22)),
         "username": data.get("username", ""),
         "auth_method": data.get("auth_method", "password"),
@@ -128,13 +170,16 @@ def get_ssh_server_decrypted(server_id: str) -> Optional[dict]:
 
 def update_ssh_server(server_id: str, data: dict) -> Optional[dict]:
     """Updates an existing SSH server, encrypting any updated credential fields."""
+    if "host" in data:
+        validate_host(data["host"])
+
     servers = load_ssh_servers()
     if server_id not in servers:
         return None
 
     existing = servers[server_id]
     existing["nickname"] = data.get("nickname", existing["nickname"])
-    existing["host"] = data.get("host", existing["host"])
+    existing["host"] = data.get("host", existing["host"]).strip()
     existing["port"] = int(data.get("port", existing["port"]))
     existing["username"] = data.get("username", existing["username"])
     existing["auth_method"] = data.get("auth_method", existing["auth_method"])
