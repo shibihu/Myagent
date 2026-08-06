@@ -302,8 +302,11 @@ class TerminalManager:
         if session_id in self.sessions:
             await self.sessions[session_id].close()
 
+        # Declare sess as None first so it's captured in the callback's closure
+        sess = None
+
         def on_close_callback():
-            if session_id in self.sessions:
+            if sess and session_id in self.sessions and self.sessions[session_id] == sess:
                 del self.sessions[session_id]
 
         if server_id:

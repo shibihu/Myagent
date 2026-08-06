@@ -37,6 +37,8 @@ async def authenticate_ws(websocket: WebSocket) -> bool:
 
     return False
 
+from backend.terminal_manager import TerminalSession
+
 @router.websocket("/ws/terminal")
 async def websocket_terminal_endpoint(websocket: WebSocket):
     # Accept the initial handshake
@@ -50,6 +52,7 @@ async def websocket_terminal_endpoint(websocket: WebSocket):
         return
 
     session_id: Optional[str] = None
+    session_instance: Optional[TerminalSession] = None
     send_queue = asyncio.Queue()
     send_task = None
     loop = asyncio.get_running_loop()
@@ -97,7 +100,7 @@ async def websocket_terminal_endpoint(websocket: WebSocket):
                 rows = int(msg.get("rows", 24))
 
                 try:
-                    await terminal_manager.create_session(
+                    session_instance = await terminal_manager.create_session(
                         session_id=session_id,
                         on_output=on_output_callback,
                         server_id=server_id,
@@ -135,6 +138,7 @@ async def websocket_terminal_endpoint(websocket: WebSocket):
                 if session_id:
                     await terminal_manager.close_session(session_id)
                     session_id = None
+                    session_instance = None
                 await send_queue.put({"action": "disconnected"})
 
             elif action == "heartbeat":
@@ -146,9 +150,11 @@ async def websocket_terminal_endpoint(websocket: WebSocket):
     except Exception as e:
         print(f"[WS Terminal] Error handling WebSocket message: {e}")
     finally:
-        # Clean up session
-        if session_id:
-            await terminal_manager.close_session(session_id)
+        # Clean up session only if it belongs to this exact WebSocket instance
+        if session_id and session_instance:
+            current_sess = terminal_manager.get_session(session_id)
+            if current_sess == session_instance:
+                await terminal_manager.close_session(session_id)
 
         # Stop outgoing send queue
         if send_task:
