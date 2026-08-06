@@ -153,11 +153,12 @@
     {% raw %}
         const { useState, useEffect, useRef } = React;
 
-        const TerminalInstance = ({ tabId, serverId, isActive, isMobile }) => {
+        const TerminalInstance = ({ tabId, serverId, isActive, isMobile, activeRepo }) => {
             const terminalRef = useRef(null);
             const xtermInstance = useRef(null);
             const wsRef = useRef(null);
             const fitAddonInstance = useRef(null);
+            const prevRepoRef = useRef(activeRepo);
 
             useEffect(() => {
                 if (!terminalRef.current) return;
@@ -217,68 +218,114 @@
                         const dims = fitAddon.proposeDimensions();
                         if (dims) window.terminalAPI.resize(dims.cols, dims.rows);
                     }, 200);
-                } else {
-                    // Web / WebSocket mode
-                    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-                    const getCookie = (name) => {
-                        const value = `; ${document.cookie}`;
-                        const parts = value.split(`; ${name}=`);
-                        if (parts.length === 2) return parts.pop().split(';').shift();
-                        return null;
-                    };
-                    const token = getCookie("access_token");
-                    const wsUrl = `${protocol}//${window.location.host}/ws/terminal${token ? `?token=${token}` : ""}`;
-
-                    const ws = new WebSocket(wsUrl);
-                    wsRef.current = ws;
-
-                    ws.onopen = () => {
-                        const dims = fitAddon.proposeDimensions() || { cols: 80, rows: 24 };
-                        ws.send(JSON.stringify({
-                            action: "connect",
-                            session_id: tabId,
-                            server_id: serverId,
-                            cols: dims.cols,
-                            rows: dims.rows
-                        }));
-                    };
-
-                    ws.onmessage = (e) => {
-                        try {
-                            const msg = JSON.parse(e.data);
-                            if (msg.action === "output") {
-                                term.write(msg.data);
-                            } else if (msg.action === "error") {
-                                term.writeln(`\r\n\x1b[1;31m[WebSocket Error]: ${msg.message}\x1b[0m\r\n`);
-                            }
-                        } catch (err) {}
-                    };
-
-                    ws.onclose = () => {
-                        term.writeln("\r\n\x1b[1;33m[Terminal Session Disconnected]\x1b[0m\r\n");
-                    };
-
-                    term.onData(data => {
-                        if (ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({ action: "input", data: data }));
-                        }
-                    });
-
-                    // Heartbeat loop
-                    const hb = setInterval(() => {
-                        if (ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({ action: "heartbeat" }));
-                        }
-                    }, 20000);
 
                     return () => {
-                        clearInterval(hb);
                         window.removeEventListener('resize', handleResize);
                         if (terminalRef.current) {
                             terminalRef.current.removeEventListener('click', triggerFocus);
                             terminalRef.current.removeEventListener('touchend', triggerFocus);
                         }
-                        if (ws) ws.close();
+                        term.dispose();
+                    };
+                } else {
+                    // Web / WebSocket mode with auto-reconnect and keep-alive
+                    let ws = null;
+                    let reconnectAttempts = 0;
+                    let isManuallyClosed = false;
+                    const maxReconnectAttempts = 5;
+                    const baseReconnectDelay = 1000;
+                    let hbInterval = null;
+
+                    const connectWS = () => {
+                        if (isManuallyClosed) return;
+
+                        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+                        const getCookie = (name) => {
+                            const value = `; ${document.cookie}`;
+                            const parts = value.split(`; ${name}=`);
+                            if (parts.length === 2) return parts.pop().split(';').shift();
+                            return null;
+                        };
+                        const token = getCookie("access_token");
+                        const wsUrl = `${protocol}//${window.location.host}/ws/terminal${token ? `?token=${token}` : ""}`;
+
+                        ws = new WebSocket(wsUrl);
+                        wsRef.current = ws;
+
+                        ws.onopen = () => {
+                            console.log(`[WS Connected] tabId: ${tabId}`);
+                            reconnectAttempts = 0;
+                            const dims = fitAddon.proposeDimensions() || { cols: 80, rows: 24 };
+                            ws.send(JSON.stringify({
+                                action: "connect",
+                                session_id: tabId,
+                                server_id: serverId,
+                                cols: dims.cols,
+                                rows: dims.rows
+                            }));
+
+                            if (hbInterval) clearInterval(hbInterval);
+                            hbInterval = setInterval(() => {
+                                if (ws.readyState === WebSocket.OPEN) {
+                                    ws.send(JSON.stringify({ action: "heartbeat" }));
+                                }
+                            }, 10000); // 10s keep-alive interval
+                        };
+
+                        ws.onmessage = (e) => {
+                            try {
+                                const msg = JSON.parse(e.data);
+                                if (msg.action === "output") {
+                                    term.write(msg.data);
+                                } else if (msg.action === "error") {
+                                    term.writeln(`\r\n\x1b[1;31m[WebSocket Error]: ${msg.message}\x1b[0m\r\n`);
+                                }
+                            } catch (err) {}
+                        };
+
+                        ws.onclose = () => {
+                            if (hbInterval) {
+                                clearInterval(hbInterval);
+                                hbInterval = null;
+                            }
+
+                            if (isManuallyClosed) {
+                                term.writeln("\r\n\x1b[1;33m[Terminal Session Disconnected]\x1b[0m\r\n");
+                                return;
+                            }
+
+                            if (reconnectAttempts < maxReconnectAttempts) {
+                                reconnectAttempts++;
+                                const delay = baseReconnectDelay * Math.pow(2, reconnectAttempts - 1);
+                                term.writeln(`\r\n\x1b[1;33m[Connection lost. Reconnecting in ${delay / 1000}s (Attempt ${reconnectAttempts}/${maxReconnectAttempts})...]\x1b[0m\r\n`);
+                                setTimeout(connectWS, delay);
+                            } else {
+                                term.writeln("\r\n\x1b[1;31m[Terminal Connection Failed. Max reconnect attempts reached.]\x1b[0m\r\n");
+                            }
+                        };
+                    };
+
+                    connectWS();
+
+                    term.onData(data => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ action: "input", data: data }));
+                        }
+                    });
+
+                    return () => {
+                        isManuallyClosed = true;
+                        if (hbInterval) {
+                            clearInterval(hbInterval);
+                        }
+                        window.removeEventListener('resize', handleResize);
+                        if (terminalRef.current) {
+                            terminalRef.current.removeEventListener('click', triggerFocus);
+                            terminalRef.current.removeEventListener('touchend', triggerFocus);
+                        }
+                        if (ws) {
+                            ws.close();
+                        }
                         term.dispose();
                     };
                 }
@@ -312,6 +359,22 @@
                 }
             }, [isActive]);
 
+            // Auto-CD when activeRepo switches
+            useEffect(() => {
+                if (serverId === null && prevRepoRef.current !== activeRepo) {
+                    const targetDir = activeRepo ? `workspace/${activeRepo}` : "workspace";
+                    const cdCmd = `\ncd "${targetDir}"\n`;
+
+                    if (window.terminalAPI) {
+                        window.terminalAPI.sendData(cdCmd);
+                    } else if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                        wsRef.current.send(JSON.stringify({ action: "input", data: cdCmd }));
+                    }
+                    console.log(`[Auto-CD] Sent cd cmd for activeRepo: ${activeRepo}`);
+                }
+                prevRepoRef.current = activeRepo;
+            }, [activeRepo, serverId]);
+
             return (
                 <div
                     ref={terminalRef}
@@ -321,7 +384,7 @@
             );
         };
 
-        const XtermTerminal = ({ isMobile }) => {
+        const XtermTerminal = ({ isMobile, activeRepo }) => {
             const [termTabs, setTermTabs] = useState([
                 { id: "local-default", name: "Local Shell", server_id: null }
             ]);
@@ -335,6 +398,63 @@
                 password: "", private_key: "", passphrase: ""
             });
             const [editingServerId, setEditingServerId] = useState(null);
+            const [quickHost, setQuickHost] = useState("");
+
+            const handleQuickConnect = () => {
+                if (!quickHost.trim()) return;
+
+                // Parse host and port
+                let host = quickHost.trim();
+                const protocolRegex = /^(?:[a-zA-Z0-9+.-]+:\/\/)/;
+                host = host.replace(protocolRegex, "");
+
+                let port = 22;
+                if (host.includes(":")) {
+                    const parts = host.split(":");
+                    host = parts[0];
+                    const possiblePort = parseInt(parts[1], 10);
+                    if (!isNaN(possiblePort)) {
+                        port = possiblePort;
+                    }
+                }
+                host = host.replace(/\.+$/, "").trim();
+
+                if (!host) return;
+
+                // Find if "Quick Tunnel" already exists
+                const existing = sshServers.find(s => s.nickname === "Quick Tunnel");
+                const method = existing ? "PUT" : "POST";
+                const url = existing ? `/api/ssh/servers/${existing.id}` : "/api/ssh/servers";
+
+                const payload = {
+                    nickname: "Quick Tunnel",
+                    host: host,
+                    port: port,
+                    username: existing ? existing.username : "root",
+                    auth_method: existing ? existing.auth_method : "password",
+                    password: existing ? existing.password : "",
+                    private_key: existing ? existing.private_key : "",
+                    passphrase: existing ? existing.passphrase : ""
+                };
+
+                fetch(url, {
+                    method: method,
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === "success") {
+                        fetchSshServers();
+                        const srvId = existing ? existing.id : data.server.id;
+                        addNewTab(srvId, `SSH: ${host}:${port}`);
+                        setQuickHost(""); // Reset quick connect input on success
+                    } else {
+                        alert("Failed to quick connect: " + (data.detail || data.message || "Unknown error"));
+                    }
+                })
+                .catch(err => console.error(err));
+            };
 
             const fetchSshServers = () => {
                 fetch("/api/ssh/servers")
@@ -370,13 +490,11 @@
                 let parsedHost = rawHost.trim();
 
                 // Strip protocols: e.g. tcp://, ssh://, http://, https://
-                const protocolMatch = parsedHost.match(/^(?:[a-zA-Z0-9+.-]+:\/\/)?(.*)/);
-                if (protocolMatch && protocolMatch[1]) {
-                    parsedHost = protocolMatch[1];
-                }
+                const protocolRegex = /^(?:[a-zA-Z0-9+.-]+:\/\/)/;
+                parsedHost = parsedHost.replace(protocolRegex, "");
 
                 // Extract port suffix: e.g. split ":33183"
-                let parsedPort = newServer.port;
+                let parsedPort = newServer.port || 22;
                 if (parsedHost.includes(":")) {
                     const parts = parsedHost.split(":");
                     parsedHost = parts[0];
@@ -396,15 +514,35 @@
                 }));
             };
 
+            const cleanHostAndPort = (srv) => {
+                let host = (srv.host || "").trim();
+                const protocolRegex = /^(?:[a-zA-Z0-9+.-]+:\/\/)/;
+                host = host.replace(protocolRegex, "");
+
+                let port = srv.port || 22;
+                if (host.includes(":")) {
+                    const parts = host.split(":");
+                    host = parts[0];
+                    const possiblePort = parseInt(parts[1], 10);
+                    if (!isNaN(possiblePort)) {
+                        port = possiblePort;
+                    }
+                }
+                host = host.replace(/\.+$/, "").trim();
+                return { ...srv, host, port };
+            };
+
             const handleSaveServer = (e) => {
                 e.preventDefault();
                 const method = editingServerId ? "PUT" : "POST";
                 const url = editingServerId ? `/api/ssh/servers/${editingServerId}` : "/api/ssh/servers";
 
+                const cleanedServer = cleanHostAndPort(newServer);
+
                 fetch(url, {
                     method: method,
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(newServer)
+                    body: JSON.stringify(cleanedServer)
                 })
                 .then(res => res.json())
                 .then(data => {
@@ -512,10 +650,29 @@
                                 )}
                             </div>
                         </div>
+                        {/* Quick Connection Bar */}
+                        <div className="flex items-center space-x-1.5 mr-2">
+                            <input
+                                type="text"
+                                value={quickHost}
+                                onChange={e => setQuickHost(e.target.value)}
+                                onKeyDown={e => e.key === "Enter" && handleQuickConnect()}
+                                placeholder="Quick Connect (Host:Port)"
+                                className="bg-[#1e1e1e] border border-borderCol rounded px-2 py-1 text-[10px] text-white focus:outline-none focus:border-brandBlue w-32 md:w-48 placeholder-gray-500 h-6"
+                            />
+                            <button
+                                onClick={handleQuickConnect}
+                                className="bg-brandBlue hover:bg-blue-600 text-white font-bold text-[10px] px-2.5 h-6 rounded flex items-center justify-center transition-colors"
+                                title="Connect immediately"
+                            >
+                                <i className="fa-solid fa-bolt text-[9px] mr-1"></i>
+                                <span>Connect</span>
+                            </button>
+                        </div>
                         {/* SSH Manager button */}
                         <button
                             onClick={() => setShowSshModal(true)}
-                            className="text-gray-400 hover:text-white hover:bg-[#18181c] px-2 py-1 rounded"
+                            className="text-gray-400 hover:text-white hover:bg-[#18181c] px-2 py-1 rounded h-6 flex items-center justify-center"
                             title="Manage SSH Connections"
                         >
                             <i className="fa-solid fa-gears text-sm"></i>
@@ -531,6 +688,7 @@
                                 serverId={tab.server_id}
                                 isActive={activeTabId === tab.id}
                                 isMobile={isMobile}
+                                activeRepo={activeRepo}
                             />
                         ))}
                     </div>
@@ -1221,6 +1379,36 @@
                 }));
             };
 
+            const createNewFileOrFolder = (type) => {
+                const promptMsg = type === "file"
+                    ? "Enter new file path (relative to workspace root, e.g. src/utils.py):"
+                    : "Enter new folder path (relative to workspace root, e.g. src/components):";
+                const path = prompt(promptMsg);
+                if (!path || !path.trim()) return;
+
+                fetch("/api/ide/create", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ path: path.trim(), type: type })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === "success") {
+                        triggerToast(data.message, "success");
+                        fetchFilesList();
+                        if (type === "file") {
+                            handleSelectFile(path.trim());
+                        }
+                    } else {
+                        triggerToast("Failed to create: " + (data.detail || data.message || "Unknown error"), "error");
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                    triggerToast("Network error creating item", "error");
+                });
+            };
+
             // Fetch chat sessions
             const fetchChatSessions = () => {
                 fetch('/chats')
@@ -1806,9 +1994,19 @@
                                                 </div>
                                             ) : (
                                                 <div class="space-y-1">
-                                                    <div class="text-xs font-semibold text-gray-400 px-2 flex items-center space-x-1.5 pb-1 mb-2">
-                                                        <i class="fa-solid fa-chevron-down text-[10px]"></i>
-                                                        <span>WORKSPACE-ROOT</span>
+                                                    <div class="text-xs font-semibold text-gray-400 px-2 flex items-center justify-between pb-1 mb-2">
+                                                        <div class="flex items-center space-x-1.5">
+                                                            <i class="fa-solid fa-chevron-down text-[10px]"></i>
+                                                            <span>WORKSPACE-ROOT</span>
+                                                        </div>
+                                                        <div class="flex items-center space-x-1">
+                                                            <button onClick={() => createNewFileOrFolder("file")} title="New File" class="p-1 hover:bg-panelBg rounded text-gray-400 hover:text-white flex items-center justify-center">
+                                                                <i class="fa-solid fa-file-circle-plus text-[11px]"></i>
+                                                            </button>
+                                                            <button onClick={() => createNewFileOrFolder("folder")} title="New Folder" class="p-1 hover:bg-panelBg rounded text-gray-400 hover:text-white flex items-center justify-center">
+                                                                <i class="fa-solid fa-folder-plus text-[11px]"></i>
+                                                            </button>
+                                                        </div>
                                                     </div>
                                                     {fileTree ? (
                                                         <FileNode
@@ -2071,7 +2269,7 @@
                                     </div>
                                     <div class={`flex-1 overflow-hidden font-mono text-[11px] text-gray-300 ${bottomTab === 'terminal' ? '' : 'p-3 overflow-y-auto space-y-1'}`}>
                                         {bottomTab === "terminal" && (
-                                            <XtermTerminal />
+                                            <XtermTerminal isMobile={isMobile} activeRepo={activeRepo} />
                                         )}
                                         {bottomTab === "output" && (
                                             <div class="text-green-400">Compiled scripts successfully.</div>
