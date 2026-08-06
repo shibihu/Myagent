@@ -1,16 +1,22 @@
 import os
 import sys
 import asyncio
-import pty
-import fcntl
-import struct
-import termios
 import subprocess
 from typing import Dict, Optional, Callable
 import asyncssh
 
 # Import SSH profile manager
 from backend.ssh_manager import get_ssh_server_decrypted
+
+# Try to import UNIX specific terminal modules
+try:
+    import pty
+    import fcntl
+    import struct
+    import termios
+    HAS_PTY_SUPPORT = True
+except ImportError:
+    HAS_PTY_SUPPORT = False
 
 class TerminalSession:
     """Base interface for a terminal session."""
@@ -38,6 +44,11 @@ class LocalTerminalSession(TerminalSession):
         self.closed = False
 
     async def start(self, cols: int = 80, rows: int = 24):
+        if not HAS_PTY_SUPPORT:
+            self.on_output("\r\n[Local Shell Error]: Local PTY shell is not supported on this platform (requires UNIX/Linux/macOS).\r\n")
+            await self.close()
+            return
+
         try:
             # Create master/slave PTY pair
             self.master_fd, slave_fd = pty.openpty()
@@ -65,18 +76,31 @@ class LocalTerminalSession(TerminalSession):
             # Close slave FD in parent process as it is now owned by child
             os.close(slave_fd)
 
-            # Start background task to read from master_fd
-            asyncio.create_task(self._read_loop())
+            # Start background task to read from master_fd using add_reader for efficiency
+            loop = asyncio.get_running_loop()
+            loop.add_reader(self.master_fd, self._read_from_pty)
 
             # Start background task to monitor process exit
             asyncio.create_task(self._wait_loop())
+
+            # Automatically cd to the active workspace folder context on startup
+            try:
+                from agent.tools import get_active_workspace
+                active_ws = get_active_workspace()
+                if active_ws:
+                    async def auto_cd():
+                        await asyncio.sleep(0.3)
+                        await self.write(f'cd "{active_ws}"\n')
+                    asyncio.create_task(auto_cd())
+            except Exception as ex:
+                print(f"[Local Session] Failed to run startup auto_cd: {ex}")
 
         except Exception as e:
             self.on_output(f"\r\n[Local Shell Error]: Failed to start local terminal process: {e}\r\n")
             await self.close()
 
     def _set_pty_size(self, cols: int, rows: int):
-        if self.master_fd is not None:
+        if HAS_PTY_SUPPORT and self.master_fd is not None:
             try:
                 # TIOCSWINSZ window size structure
                 size_struct = struct.pack("HHHH", rows, cols, 0, 0)
@@ -84,22 +108,20 @@ class LocalTerminalSession(TerminalSession):
             except Exception as e:
                 print(f"[Local Session] Failed to set window size: {e}")
 
-    async def _read_loop(self):
-        loop = asyncio.get_running_loop()
-        while not self.closed:
-            try:
-                # Wait for data to be available on master_fd
-                await asyncio.sleep(0.01) # Small throttle to prevent CPU thrashing
-                try:
-                    data = os.read(self.master_fd, 8192)
-                    if not data:
-                        break
-                    self.on_output(data.decode("utf-8", errors="ignore"))
-                except BlockingIOError:
-                    continue
-            except Exception:
-                break
-        await self.close()
+    def _read_from_pty(self):
+        """Callback invoked when master_fd has data available, avoiding active polling sleep."""
+        if self.closed or self.master_fd is None:
+            return
+        try:
+            data = os.read(self.master_fd, 8192)
+            if not data:
+                asyncio.create_task(self.close())
+                return
+            self.on_output(data.decode("utf-8", errors="ignore"))
+        except BlockingIOError:
+            pass
+        except Exception:
+            asyncio.create_task(self.close())
 
     async def _wait_loop(self):
         if self.proc:
@@ -107,7 +129,7 @@ class LocalTerminalSession(TerminalSession):
         await self.close()
 
     async def write(self, data: str):
-        if self.master_fd is not None and not self.closed:
+        if HAS_PTY_SUPPORT and self.master_fd is not None and not self.closed:
             try:
                 os.write(self.master_fd, data.encode("utf-8"))
             except Exception:
@@ -121,8 +143,13 @@ class LocalTerminalSession(TerminalSession):
             return
         self.closed = True
 
-        # Unregister and close FD
+        # Unregister reader and close FD
         if self.master_fd is not None:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.remove_reader(self.master_fd)
+            except Exception:
+                pass
             try:
                 os.close(self.master_fd)
             except Exception:

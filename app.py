@@ -819,6 +819,10 @@ class SaveFileRequest(BaseModel):
     filepath: str
     content: str
 
+class CreateFileOrFolderRequest(BaseModel):
+    path: str
+    type: str # "file" or "folder"
+
 def build_tree_recursive(path: str, base_path: str) -> dict:
     name = os.path.basename(path) if path != base_path else "root"
     rel_path = os.path.relpath(path, base_path).replace("\\", "/")
@@ -1075,6 +1079,29 @@ async def api_ide_save_file(req: SaveFileRequest):
         _write_and_sync_file(target_path, req.content, binary=False)
 
         return {"status": "success", "message": f"Successfully saved {req.filepath}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/ide/create")
+async def api_ide_create_file_or_folder(req: CreateFileOrFolderRequest):
+    """Creates a new empty file or folder in the active workspace."""
+    from agent.tools import clean_path, ensure_workspace
+    try:
+        ensure_workspace()
+        target_path = clean_path(req.path)
+
+        if req.type == "folder":
+            os.makedirs(target_path, exist_ok=True)
+            return {"status": "success", "message": f"Successfully created folder {req.path}"}
+        elif req.type == "file":
+            # Ensure parent folder exists
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            # Create a blank file if it does not exist
+            if not os.path.exists(target_path):
+                _write_and_sync_file(target_path, "", binary=False)
+            return {"status": "success", "message": f"Successfully created file {req.path}"}
+        else:
+            raise HTTPException(status_code=400, detail="Invalid item type. Must be 'file' or 'folder'")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

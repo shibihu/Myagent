@@ -15,11 +15,6 @@ router = APIRouter()
 
 async def authenticate_ws(websocket: WebSocket) -> bool:
     """Authenticates the WebSocket connection using JWT from cookies or query parameters."""
-    # If no secret specifically configured in system environment variables, allow bypass for local dev/test environment
-    if not os.environ.get("JWT_SECRET"):
-        print("[WS Auth] Warning: JWT_SECRET environment variable not set. Bypassing WS authentication.")
-        return True
-
     # 1. Look for token in cookies
     token = websocket.cookies.get("access_token")
 
@@ -32,6 +27,7 @@ async def authenticate_ws(websocket: WebSocket) -> bool:
         return False
 
     try:
+        # Secure fallback: decode using auth_mod's JWT_SECRET (which falls back safely or uses env configuration)
         payload = jwt.decode(token, auth_mod.JWT_SECRET, algorithms=[auth_mod.JWT_ALGORITHM])
         github_id = payload.get("sub")
         if github_id:

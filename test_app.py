@@ -659,6 +659,41 @@ class TerminalAndSSHTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("Host address must not contain a protocol prefix", resp.json()["detail"])
 
+    def test_ide_create_file_or_folder(self):
+        from fastapi.testclient import TestClient
+        import app
+        client = TestClient(app.app)
+
+        # Test folder creation
+        folder_payload = {
+            "path": "test_dir_created",
+            "type": "folder"
+        }
+        resp = client.post("/api/ide/create", json=folder_payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["status"], "success")
+
+        # Test file creation
+        file_payload = {
+            "path": "test_dir_created/test_file_created.txt",
+            "type": "file"
+        }
+        resp = client.post("/api/ide/create", json=file_payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["status"], "success")
+
+        # Verify exists
+        from agent.tools import clean_path
+        self.assertTrue(os.path.exists(clean_path("test_dir_created")))
+        self.assertTrue(os.path.exists(clean_path("test_dir_created/test_file_created.txt")))
+
+        # Cleanup
+        try:
+            os.remove(clean_path("test_dir_created/test_file_created.txt"))
+            os.rmdir(clean_path("test_dir_created"))
+        except Exception:
+            pass
+
 
 if __name__ == "__main__":
     unittest.main()
