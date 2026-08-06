@@ -399,6 +399,7 @@
             });
             const [editingServerId, setEditingServerId] = useState(null);
             const [quickHost, setQuickHost] = useState("");
+            const [quickPassword, setQuickPassword] = useState("");
 
             const handleQuickConnect = () => {
                 if (!quickHost.trim()) return;
@@ -434,6 +435,7 @@
                 const url = existing ? `/api/ssh/servers/${existing.id}` : "/api/ssh/servers";
 
                 const finalUsername = username || (existing ? existing.username : "root");
+                const finalPassword = quickPassword ? quickPassword : (existing ? existing.password : "");
 
                 const payload = {
                     nickname: "Quick Tunnel",
@@ -441,7 +443,7 @@
                     port: port,
                     username: finalUsername,
                     auth_method: existing ? existing.auth_method : "password",
-                    password: existing ? existing.password : "",
+                    password: finalPassword,
                     private_key: existing ? existing.private_key : "",
                     passphrase: existing ? existing.passphrase : ""
                 };
@@ -458,6 +460,7 @@
                         const srvId = existing ? existing.id : data.server.id;
                         addNewTab(srvId, `SSH: ${host}:${port}`);
                         setQuickHost(""); // Reset quick connect input on success
+                        setQuickPassword(""); // Reset password field
                     } else {
                         alert("Failed to quick connect: " + (data.detail || data.message || "Unknown error"));
                     }
@@ -667,7 +670,15 @@
                                 onChange={e => setQuickHost(e.target.value)}
                                 onKeyDown={e => e.key === "Enter" && handleQuickConnect()}
                                 placeholder="[user@]host[:port]"
-                                className="bg-[#1e1e1e] border border-borderCol rounded px-2 py-1 text-[10px] text-white focus:outline-none focus:border-brandBlue w-32 md:w-48 placeholder-gray-500 h-6"
+                                className="bg-[#1e1e1e] border border-borderCol rounded px-2 py-1 text-[10px] text-white focus:outline-none focus:border-brandBlue w-24 md:w-36 placeholder-gray-500 h-6"
+                            />
+                            <input
+                                type="password"
+                                value={quickPassword}
+                                onChange={e => setQuickPassword(e.target.value)}
+                                onKeyDown={e => e.key === "Enter" && handleQuickConnect()}
+                                placeholder="Password"
+                                className="bg-[#1e1e1e] border border-borderCol rounded px-2 py-1 text-[10px] text-white focus:outline-none focus:border-brandBlue w-16 md:w-24 placeholder-gray-500 h-6"
                             />
                             <button
                                 onClick={handleQuickConnect}
