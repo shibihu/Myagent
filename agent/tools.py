@@ -3,6 +3,15 @@ import subprocess
 import shutil
 import re
 import logging
+import asyncio
+import json
+import base64
+
+# Import terminal_manager ให้ถูกต้องตามโครงสร้างโปรเจกต์ของคุณ
+try:
+    from backend.terminal_manager import terminal_manager
+except ImportError:
+    terminal_manager = None
 
 logger = logging.getLogger(__name__)
 
@@ -35,16 +44,12 @@ def ensure_workspace():
     try:
         if shutil.which("git") is not None:
             subprocess.run(
-                'git config --global user.name "MyAgent Bot"',
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
+                ["git", "config", "--global", "user.name", "MyAgent Bot"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE
             )
             subprocess.run(
-                'git config --global user.email "myagent@bot.local"',
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
+                ["git", "config", "--global", "user.email", "myagent@bot.local"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE
             )
     except Exception as e:
         print(f"[Git Identity Config Warning]: {e}")
@@ -55,7 +60,6 @@ def clean_path(filepath: str) -> str:
     """Resolve path and ensure it remains inside the workspace directory for basic path containment."""
     ws = get_active_workspace()
 
-    # Strip any leading slashes or relative directory prefixes to safely default to root './'
     cleaned = filepath.lstrip("/\\")
     if cleaned.startswith("./") or cleaned.startswith(".\\"):
         cleaned = cleaned[2:]
@@ -74,7 +78,6 @@ def truncate_text(val: str, max_chars: int = 1000) -> str:
         return val[:max_chars] + "\n...[Truncated]"
     return val
 
-
 def _write_and_sync_file(path: str, content: bytes | str, binary: bool = False, encoding: str = "utf-8") -> None:
     """Writes file content synchronously to disk and ensures buffers are flushed."""
     dir_path = os.path.dirname(path)
@@ -87,7 +90,6 @@ def _write_and_sync_file(path: str, content: bytes | str, binary: bool = False, 
         f.flush()
         os.fsync(f.fileno())
 
-    # Also attempt to sync the parent directory so the file metadata is committed.
     try:
         dir_path = os.path.dirname(path) or "."
         if hasattr(os, "O_DIRECTORY"):
@@ -99,9 +101,7 @@ def _write_and_sync_file(path: str, content: bytes | str, binary: bool = False, 
     except Exception as e:
         logger.debug("Directory fsync skipped or failed: %s", e)
 
-
 def read_file_tool(filepath: str) -> dict:
-    """Reads the content of a file relative to the workspace, truncated to 1,000 characters."""
     try:
         target_path = clean_path(filepath)
     except ValueError as ve:
@@ -119,7 +119,6 @@ def read_file_tool(filepath: str) -> dict:
         return {"status": "error", "message": str(e)}
 
 def patch_file_tool(filepath: str, search_block: str, replace_block: str) -> dict:
-    """Patches a file relative to the workspace using exact block search and replace."""
     try:
         target_path = clean_path(filepath)
     except ValueError as ve:
@@ -162,7 +161,6 @@ def patch_file_tool(filepath: str, search_block: str, replace_block: str) -> dic
         return {"status": "error", "message": str(e)}
 
 def view_dir_tool(path: str = ".") -> dict:
-    """Recursively lists folders and files in the workspace directory, limiting entries to prevent token exhaustion."""
     try:
         target_path = clean_path(path)
     except ValueError as ve:
@@ -183,7 +181,6 @@ def view_dir_tool(path: str = ".") -> dict:
                 rel_p = os.path.relpath(full_p, ws)
                 result_tree.append(rel_p)
 
-        # Limit entries in listing to keep tokens lightweight
         sorted_files = sorted(result_tree)
         if len(sorted_files) > 40:
             sorted_files = sorted_files[:40] + ["...[Truncated due to too many files]"]
@@ -193,12 +190,9 @@ def view_dir_tool(path: str = ".") -> dict:
         return {"status": "error", "message": str(e)}
 
 def execute_command_tool(command: str) -> dict:
-    """Executes a command inside the workspace directory, with truncated stdout/stderr output."""
     ws = get_active_workspace()
 
-    # Intercept and replace CLI git operations with serverless GitHub REST API fallback
     if "git push" in command or "git commit" in command or (shutil.which("git") is None and "git " in command):
-        # Extract commit message if available
         commit_message = "Update from MyAgent"
         match = re.search(r'-m\s+["\']([^"\']+)["\']', command)
         if match:
@@ -237,10 +231,7 @@ def execute_command_tool(command: str) -> dict:
         return {"status": "error", "message": str(e)}
 
 def sync_workspace_to_github_rest(commit_message: str = "Update from MyAgent") -> dict:
-    """Syncs local workspace files to GitHub repository using REST API as a Vercel-compatible fallback."""
     try:
-        import json
-        import base64
         import httpx
 
         ws = get_active_workspace()
@@ -305,13 +296,10 @@ def sync_workspace_to_github_rest(commit_message: str = "Update from MyAgent") -
         return {"status": "error", "message": f"Serverless GitHub sync failed: {str(e)}"}
 
 def write_file_tool(filepath: str, content: str) -> dict:
-    """Writes or overwrites a file inside the workspace entirely with the given content."""
-    # Check if we should dispatch directly to active Roblox Studio Session via Ngrok-MCP
     studio_mcp_url = os.environ.get("STUDIO_MCP_URL")
     if studio_mcp_url and (filepath.endswith(".lua") or filepath.endswith(".luau")):
         try:
             import httpx
-            # Determine script details
             filename = os.path.basename(filepath)
             script_name = os.path.splitext(filename)[0]
 
@@ -339,7 +327,6 @@ def write_file_tool(filepath: str, content: str) -> dict:
                 "ngrok-skip-browser-warning": "true"
             }
 
-            # Post directly to the Roblox Studio MCP Plugin via Ngrok
             with httpx.Client(follow_redirects=True, timeout=10) as client:
                 resp = client.post(studio_mcp_url, json=payload, headers=headers)
                 if resp.status_code in [200, 201]:
@@ -369,76 +356,51 @@ def write_file_tool(filepath: str, content: str) -> dict:
         return {"status": "error", "message": f"Failed to write file: {str(e)}"}
 
 def list_directory_tool(path: str = ".") -> dict:
-    """Lists directory structure and contents in the workspace (alias to view_dir_tool)."""
     return view_dir_tool(path)
 
-def clone_repository_tool(repo_url: str) -> dict:
-    """Clones a GitHub repository into a subfolder of the workspace. Sets it as the active repository."""
-    base_ws = ensure_workspace()
-    global ACTIVE_REPO_NAME
+async def clone_repository_tool(repo_url: str) -> dict:
     try:
-        if shutil.which("git") is None:
+        repo_name = repo_url.rstrip("/").split("/")[-1]
+        if repo_name.endswith(".git"):
+            repo_name = repo_name[:-4]
+
+        session_id = "default_session"
+        session = terminal_manager.get_session(session_id) if terminal_manager else None
+
+        if session:
+            command = f"git clone {repo_url} && cd {repo_name}\n"
+            await session.write(command)
             return {
-                "status": "error",
-                "message": "Git command not found on the system. Please ensure git is installed."
-            }
-
-        # Parse repository name
-        match = re.search(r"github\.com/[^/]+/([^/.]+)", repo_url)
-        if match:
-            repo_name = match.group(1)
-            if repo_name.endswith(".git"):
-                repo_name = repo_name[:-4]
-        else:
-            repo_name = "repo-" + str(os.getpid())
-
-        target_dir = os.path.join(base_ws, repo_name)
-        if os.path.exists(target_dir):
-            try:
-                shutil.rmtree(target_dir)
-            except Exception:
-                pass
-
-        os.makedirs(target_dir, exist_ok=True)
-
-        process = subprocess.run(
-            f"git clone {repo_url} .",
-            shell=True,
-            cwd=target_dir,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=120
-        )
-        if process.returncode == 0:
-            ACTIVE_REPO_NAME = repo_name
-            return {
-                "status": "success",
-                "message": f"Repository '{repo_name}' cloned successfully.",
-                "stdout": truncate_text(process.stdout)
+                "status": "success", 
+                "message": f"Sent command to terminal: git clone and cd to {repo_name}"
             }
         else:
+            subprocess.run(
+                ["git", "clone", repo_url], 
+                cwd=WORKSPACE_DIR, 
+                check=True, 
+                capture_output=True
+            )
             return {
-                "status": "error",
-                "message": "Failed to clone repository.",
-                "stderr": truncate_text(process.stderr or "Unknown terminal clone error"),
-                "stdout": truncate_text(process.stdout)
+                "status": "success", 
+                "message": f"Cloned {repo_name} successfully into workspace."
             }
+
+    except subprocess.CalledProcessError as e:
+        return {"status": "error", "message": f"Git Error: {e.stderr.decode()}"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 git_clone_tool = clone_repository_tool
 
 def git_status_tool() -> dict:
-    """Checks git status of the workspace, with truncated output."""
     ws = get_active_workspace()
     if not os.path.exists(os.path.join(ws, ".git")):
         return {"status": "error", "message": "No git repository found in workspace."}
 
     try:
         process = subprocess.run(
-            "git status",
-            shell=True,
+            ["git", "status"],
             cwd=ws,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -453,23 +415,20 @@ def git_status_tool() -> dict:
         return {"status": "error", "message": str(e)}
 
 def git_rollback_tool() -> dict:
-    """Rolls back all uncommitted changes in the workspace, with truncated output."""
     ws = get_active_workspace()
     if not os.path.exists(os.path.join(ws, ".git")):
         return {"status": "error", "message": "No git repository found in workspace."}
 
     try:
         res1 = subprocess.run(
-            "git reset --hard HEAD",
-            shell=True,
+            ["git", "reset", "--hard", "HEAD"],
             cwd=ws,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True
         )
         res2 = subprocess.run(
-            "git clean -fd",
-            shell=True,
+            ["git", "clean", "-fd"],
             cwd=ws,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -485,15 +444,13 @@ def git_rollback_tool() -> dict:
         return {"status": "error", "message": str(e)}
 
 def git_checkout_tool(branch_name: str) -> dict:
-    """Switches to an existing branch or creates a new one, with truncated output."""
     ws = get_active_workspace()
     if not os.path.exists(os.path.join(ws, ".git")):
         return {"status": "error", "message": "No git repository found in workspace."}
 
     try:
         process = subprocess.run(
-            f"git checkout {branch_name}",
-            shell=True,
+            ["git", "checkout", branch_name],
             cwd=ws,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -501,8 +458,7 @@ def git_checkout_tool(branch_name: str) -> dict:
         )
         if process.returncode != 0:
             process2 = subprocess.run(
-                f"git checkout -b {branch_name}",
-                shell=True,
+                ["git", "checkout", "-b", branch_name],
                 cwd=ws,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -528,15 +484,13 @@ def git_checkout_tool(branch_name: str) -> dict:
         return {"status": "error", "message": str(e)}
 
 def git_pull_tool() -> dict:
-    """Pulls the latest changes from the remote repository, with truncated output."""
     ws = get_active_workspace()
     if not os.path.exists(os.path.join(ws, ".git")):
         return {"status": "error", "message": "No git repository found in workspace."}
 
     try:
         process = subprocess.run(
-            "git pull",
-            shell=True,
+            ["git", "pull"],
             cwd=ws,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
