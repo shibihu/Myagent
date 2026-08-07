@@ -961,6 +961,71 @@ class GitCommitPushRequest(BaseModel):
     branch_name: str
     token: str
 
+class GitPullRequest(BaseModel):
+    repo_url: Optional[str] = ""
+    branch_name: Optional[str] = "main"
+    token: Optional[str] = ""
+
+@app.post("/api/git/pull")
+async def api_git_pull(req: GitPullRequest):
+    """Pulls the latest changes from the remote repository, supporting optional authentication token."""
+    from agent.tools import get_active_workspace
+    import subprocess
+    import os
+    import re
+
+    ws = get_active_workspace()
+    if not os.path.exists(os.path.join(ws, ".git")):
+        return {"status": "error", "message": "No git repository found in workspace."}
+
+    try:
+        # Build the pull target
+        repo_url = req.repo_url.strip() if req.repo_url else ""
+        branch = req.branch_name.strip() if req.branch_name else "main"
+        token = req.token.strip() if req.token else ""
+
+        if repo_url and token:
+            # Parse repository URL and inject token to authenticate
+            repo_url_clean = repo_url
+            if repo_url_clean.startswith("https://"):
+                repo_url_clean = repo_url_clean[len("https://"):]
+            elif repo_url_clean.startswith("http://"):
+                repo_url_clean = repo_url_clean[len("http://"):]
+
+            authenticated_url = f"https://{token}@{repo_url_clean}"
+            pull_cmd = ["git", "pull", authenticated_url, branch]
+        else:
+            # Simple fallback pull
+            pull_cmd = ["git", "pull"]
+
+        # Execute git pull safely (using list arguments, shell=False) to prevent command injection
+        process = subprocess.run(
+            pull_cmd,
+            cwd=ws,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=45
+        )
+
+        if process.returncode == 0:
+            return {
+                "status": "success",
+                "message": "Successfully pulled latest changes from remote.",
+                "stdout": process.stdout
+            }
+        else:
+            err_msg = process.stderr or "Unknown pull error."
+            # Mask token in case it was printed in the git pull error traceback
+            err_msg_masked = re.sub(r'https://[^@]+@', 'https://***@', err_msg)
+            return {
+                "status": "error",
+                "message": f"Git Pull Error: {err_msg_masked}",
+                "stderr": err_msg_masked
+            }
+    except Exception as e:
+        return {"status": "error", "message": f"Fatal exception during git pull execution: {str(e)}"}
+
 @app.post("/api/git/commit-push")
 async def api_git_commit_push(req: GitCommitPushRequest):
     """Safely stages, commits, and pushes modified project files directly to GitHub with credentials."""

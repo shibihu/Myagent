@@ -341,11 +341,13 @@ class AppTests(unittest.TestCase):
 
         # 5. Test Flexible policy with X-API-Token
         from fastapi import Request
-        from agent.auth import get_current_user_or_api_client
+        from agent.auth import get_current_user_or_api_client, API_SECRET_TOKEN
         import unittest.mock as mock
 
         mock_req = mock.Mock()
-        mock_req.headers = {"X-API-Token": "super-secret-ide-agent-token-123"}
+        # Mock cookies to return None so that standard JWT path falls back cleanly
+        mock_req.cookies = {"access_token": None}
+        mock_req.headers = {"X-API-Token": API_SECRET_TOKEN}
         res = asyncio.run(get_current_user_or_api_client(mock_req))
         self.assertTrue(res["is_api_client"])
         self.assertEqual(res["username"], "Roblox_Studio_Client")
@@ -588,6 +590,20 @@ class TerminalAndSSHTests(unittest.TestCase):
         # Ensure unchanged credentials stay intact
         self.assertEqual(decrypted_updated["private_key"], "private_key_content")
 
+        # 4b. Update with empty string credentials to ensure they do not wipe existing saved credentials
+        updated_empty = update_ssh_server(server["id"], {
+            "nickname": "Updated Empty Name",
+            "password": "",
+            "private_key": "",
+            "passphrase": ""
+        })
+        self.assertEqual(updated_empty["nickname"], "Updated Empty Name")
+
+        decrypted_empty = get_ssh_server_decrypted(server["id"])
+        self.assertEqual(decrypted_empty["password"], "new_password")
+        self.assertEqual(decrypted_empty["private_key"], "private_key_content")
+        self.assertEqual(decrypted_empty["passphrase"], "my_passphrase")
+
         # 5. Delete configuration
         success = delete_ssh_server(server["id"])
         self.assertTrue(success)
@@ -595,7 +611,9 @@ class TerminalAndSSHTests(unittest.TestCase):
 
     def test_terminal_manager_local_session(self):
         """Test local PTY terminal session lifecycle."""
-        from backend.terminal_manager import terminal_manager
+        from backend.terminal_manager import terminal_manager, HAS_PTY_SUPPORT
+        if not HAS_PTY_SUPPORT:
+            self.skipTest("Requires UNIX PTY support")
         import asyncio
 
         # We can run async operations in our unittest
@@ -693,6 +711,52 @@ class TerminalAndSSHTests(unittest.TestCase):
             os.rmdir(clean_path("test_dir_created"))
         except Exception:
             pass
+
+    def test_git_pull_endpoint(self):
+        """Test secure git pull changes endpoint."""
+        from fastapi.testclient import TestClient
+        import app
+        client = TestClient(app.app)
+
+        # 1. Test when no git repo exists, should return error
+        from agent.tools import WORKSPACE_DIR
+        git_dir = os.path.join(WORKSPACE_DIR, ".git")
+        if os.path.exists(git_dir):
+            import shutil
+            shutil.rmtree(git_dir)
+
+        payload = {
+            "repo_url": "https://github.com/shibihu/Myagent.git",
+            "branch_name": "main",
+            "token": "mock-pat"
+        }
+        resp = client.post("/api/git/pull", json=payload)
+        self.assertEqual(resp.json()["status"], "error")
+        self.assertIn("No git repository found", resp.json()["message"])
+
+        # 2. Mock a basic git repository to test valid call structure
+        try:
+            import subprocess
+            subprocess.run("git init", shell=True, cwd=WORKSPACE_DIR)
+            subprocess.run("git remote add origin https://github.com/shibihu/Myagent.git", shell=True, cwd=WORKSPACE_DIR)
+        except Exception:
+            pass
+
+        # We can mock git pull execution to avoid external network dependencies during tests
+        from unittest.mock import patch
+        import subprocess
+
+        # Success pull mock
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=["git", "pull"],
+                returncode=0,
+                stdout="Already up to date.",
+                stderr=""
+            )
+            resp = client.post("/api/git/pull", json=payload)
+            self.assertEqual(resp.json()["status"], "success")
+            self.assertIn("pulled latest changes", resp.json()["message"])
 
 
 if __name__ == "__main__":
