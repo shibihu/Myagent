@@ -8,13 +8,17 @@ from database import db_helper
 
 load_dotenv(".env.example")  # Load environment variables from .env file
 
+import secrets
+
 GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
-JWT_SECRET = os.environ.get("JWT_SECRET") or "super-secret-default-jwt-token-signing-key-12345"
+
+# Use secure runtime token fallback if environment variable is missing to prevent signature bypass
+JWT_SECRET = os.environ.get("JWT_SECRET") or secrets.token_hex(32)
 JWT_ALGORITHM = "HS256"
 
 # API Token for Roblox Studio & system integrations
-API_SECRET_TOKEN = os.environ.get("API_SECRET_TOKEN") or "super-secret-ide-agent-token-123"
+API_SECRET_TOKEN = os.environ.get("API_SECRET_TOKEN") or secrets.token_hex(32)
 
 def create_access_token(data: dict, expires_delta: Optional[datetime.timedelta] = None) -> str:
     """Creates a custom signed JSON Web Token (JWT)."""

@@ -185,11 +185,11 @@ def update_ssh_server(server_id: str, data: dict) -> Optional[dict]:
     existing["auth_method"] = data.get("auth_method", existing["auth_method"])
 
     # Only overwrite credentials if specifically passed (i.e. not masked/empty)
-    if "password" in data and data["password"] is not None:
+    if "password" in data and data["password"] is not None and data["password"] != "":
         existing["password"] = encrypt_value(data["password"])
-    if "private_key" in data and data["private_key"] is not None:
+    if "private_key" in data and data["private_key"] is not None and data["private_key"] != "":
         existing["private_key"] = encrypt_value(data["private_key"])
-    if "passphrase" in data and data["passphrase"] is not None:
+    if "passphrase" in data and data["passphrase"] is not None and data["passphrase"] != "":
         existing["passphrase"] = encrypt_value(data["passphrase"])
 
     servers[server_id] = existing

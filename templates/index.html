@@ -1735,6 +1735,34 @@
                 });
             };
 
+            const handleGitPull = () => {
+                setGitLoading(true);
+                fetch('/api/git/pull', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        repo_url: gitRepoUrl,
+                        branch_name: gitBranchName,
+                        token: gitPat
+                    })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    setGitLoading(false);
+                    if (data.status === "success") {
+                        triggerToast("Successfully pulled latest changes from remote GitHub repository!", "success");
+                        fetchGitChanges(); // Refresh changes list
+                        fetchFilesList();  // Reload explorer tree to display newly pulled files
+                    } else {
+                        triggerToast(data.message || "Failed to pull remote changes", "error");
+                    }
+                })
+                .catch(err => {
+                    setGitLoading(false);
+                    triggerToast("Connection error during git pull", "error");
+                });
+            };
+
             // Delete chat session
             const handleDeleteSession = async (e, id) => {
                 e.stopPropagation();
@@ -2173,23 +2201,44 @@
                                                     />
                                                 </div>
 
-                                                <button
-                                                    onClick={handleCommitPush}
-                                                    disabled={gitLoading || Object.keys(gitChanges).length === 0}
-                                                    class={`w-full font-bold py-2 px-4 rounded text-xs transition-colors flex items-center justify-center space-x-1.5 shadow-md ${gitLoading ? 'bg-gray-600 text-gray-400' : 'bg-green-600 hover:bg-green-500 text-white'}`}
-                                                >
-                                                    {gitLoading ? (
-                                                        <>
-                                                            <i class="fa-solid fa-circle-notch animate-spin"></i>
-                                                            <span>Syncing to GitHub...</span>
-                                                        </>
-                                                    ) : (
-                                                        <>
-                                                            <i class="fa-solid fa-cloud-arrow-up"></i>
-                                                            <span>Commit & Push Changes</span>
-                                                        </>
-                                                    )}
-                                                </button>
+                                                <div class="flex flex-col space-y-2">
+                                                    <button
+                                                        onClick={handleCommitPush}
+                                                        disabled={gitLoading || Object.keys(gitChanges).length === 0}
+                                                        class={`w-full font-bold py-2 px-4 rounded text-xs transition-colors flex items-center justify-center space-x-1.5 shadow-md ${gitLoading ? 'bg-gray-600 text-gray-400' : 'bg-green-600 hover:bg-green-500 text-white'}`}
+                                                    >
+                                                        {gitLoading ? (
+                                                            <>
+                                                                <i class="fa-solid fa-circle-notch animate-spin"></i>
+                                                                <span>Syncing to GitHub...</span>
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <i class="fa-solid fa-cloud-arrow-up"></i>
+                                                                <span>Commit & Push Changes</span>
+                                                            </>
+                                                        )}
+                                                    </button>
+
+                                                    <button
+                                                        onClick={handleGitPull}
+                                                        disabled={gitLoading}
+                                                        class={`w-full font-bold py-2 px-4 rounded text-xs transition-colors flex items-center justify-center space-x-1.5 shadow-md ${gitLoading ? 'bg-gray-600 text-gray-400' : 'bg-[#18181c] hover:bg-surfaceBg text-white border border-borderCol'}`}
+                                                        title="Pull latest changes from remote repository"
+                                                    >
+                                                        {gitLoading ? (
+                                                            <>
+                                                                <i class="fa-solid fa-circle-notch animate-spin"></i>
+                                                                <span>Pulling...</span>
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <i class="fa-solid fa-cloud-arrow-down"></i>
+                                                                <span>Pull Changes</span>
+                                                            </>
+                                                        )}
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
                                     )}
