@@ -145,6 +145,75 @@ class AppTests(unittest.TestCase):
         self.assertEqual(res["returncode"], 0)
         self.assertIn("Jules is here", res["stdout"])
 
+    def test_chat_agent_status_callback_metadata(self):
+        """Test that ChatAgent status_callback correctly passes tool_name and filepath to extended callbacks."""
+        from agent.agent import ChatAgent
+        agent_instance = ChatAgent()
+
+        called_status_messages = []
+        called_tools = []
+        called_filepaths = []
+
+        async def status_callback_mock(msg, tool_name=None, filepath=None):
+            called_status_messages.append(msg)
+            called_tools.append(tool_name)
+            called_filepaths.append(filepath)
+
+        # We mock the post requests in sequence:
+        class MockResponse:
+            def __init__(self, json_data, status_code=200):
+                self._json = json_data
+                self.status_code = status_code
+            def json(self):
+                return self._json
+
+        mock_responses = [
+            MockResponse({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": "call_mock_meta",
+                            "type": "function",
+                            "function": {
+                                "name": "write_file",
+                                "arguments": json.dumps({"filepath": "meta_test.txt", "content": "Meta!"})
+                            }
+                        }]
+                    }
+                }],
+                "usage": {"total_tokens": 50}
+            }),
+            MockResponse({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": "Success with meta.",
+                        "tool_calls": None
+                    }
+                }],
+                "usage": {"total_tokens": 100}
+            })
+        ]
+
+        response_iterator = iter(mock_responses)
+
+        async def mock_post(*args, **kwargs):
+            return next(response_iterator)
+
+        with patch.dict(os.environ, {"GROQ_API_KEY": "mock_key"}):
+            agent_instance = ChatAgent()
+            with patch("httpx.AsyncClient.post", side_effect=mock_post):
+                result = asyncio.run(agent_instance.get_response(
+                    "write some metadata",
+                    status_callback=status_callback_mock
+                ))
+
+        # Check that our metadata callback was invoked with exact tool name and filepath
+        self.assertIn("write_file", called_tools)
+        self.assertIn("meta_test.txt", called_filepaths)
+
     def test_chat_agent_tool_calling(self):
         """Test that ChatAgent tool calling processes tool calls and executes them correctly."""
         agent_instance = ChatAgent()

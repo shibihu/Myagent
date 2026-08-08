@@ -461,8 +461,13 @@ async def chat_endpoint(
             async def event_generator():
                 queue = asyncio.Queue()
 
-                async def status_cb(msg: str):
-                    await queue.put({"type": "status", "message": msg})
+                async def status_cb(msg: str, tool_name: Optional[str] = None, filepath: Optional[str] = None):
+                    status_event = {"type": "status", "message": msg}
+                    if tool_name is not None:
+                        status_event["tool_name"] = tool_name
+                    if filepath is not None:
+                        status_event["filepath"] = filepath
+                    await queue.put(status_event)
 
                 async def run_agent_task():
                     try:

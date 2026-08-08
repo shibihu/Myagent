@@ -40,10 +40,15 @@ class ChatAgent:
     async def _get_response_core(self, prompt: str, history: list = None, status_callback=None, is_roblox: bool = False) -> dict:
         """ระบบสลับสมองข้ามค่ายอัตโนมัติพร้อมระบบ Tool Calling (Function Calling) และ Sliding Window History"""
         
-        async def trigger_status(msg: str):
+        async def trigger_status(msg: str, tool_name: str = None, filepath: str = None):
             if status_callback:
                 try:
-                    await status_callback(msg)
+                    import inspect
+                    sig = inspect.signature(status_callback)
+                    if "tool_name" in sig.parameters or "filepath" in sig.parameters:
+                        await status_callback(msg, tool_name=tool_name, filepath=filepath)
+                    else:
+                        await status_callback(msg)
                 except Exception:
                     pass
 
@@ -417,23 +422,23 @@ class ChatAgent:
 
                                     # Provide progress updates
                                     if tool_name == "read_file":
-                                        await trigger_status(f"Reading file: {parsed_args.get('filepath', '')}...")
+                                        await trigger_status(f"Reading file: {parsed_args.get('filepath', '')}...", tool_name=tool_name, filepath=parsed_args.get('filepath'))
                                     elif tool_name == "write_file":
-                                        await trigger_status(f"Updating code: {parsed_args.get('filepath', '')}...")
+                                        await trigger_status(f"Updating code: {parsed_args.get('filepath', '')}...", tool_name=tool_name, filepath=parsed_args.get('filepath'))
                                     elif tool_name == "patch_file":
-                                        await trigger_status(f"Patching file: {parsed_args.get('filepath', '')}...")
+                                        await trigger_status(f"Patching file: {parsed_args.get('filepath', '')}...", tool_name=tool_name, filepath=parsed_args.get('filepath'))
                                     elif tool_name == "execute_command":
-                                        await trigger_status(f"Running command: {parsed_args.get('command', '')}...")
+                                        await trigger_status(f"Running command: {parsed_args.get('command', '')}...", tool_name=tool_name)
                                     elif tool_name == "git_clone" or tool_name == "clone_repository":
-                                        await trigger_status(f"Git cloning repository: {parsed_args.get('repo_url', '')}...")
+                                        await trigger_status(f"Git cloning repository: {parsed_args.get('repo_url', '')}...", tool_name=tool_name)
                                     elif tool_name == "git_checkout":
-                                        await trigger_status(f"Git checking out branch: {parsed_args.get('branch_name', '')}...")
+                                        await trigger_status(f"Git checking out branch: {parsed_args.get('branch_name', '')}...", tool_name=tool_name)
                                     elif tool_name == "git_pull":
-                                        await trigger_status("Git pulling updates...")
+                                        await trigger_status("Git pulling updates...", tool_name=tool_name)
                                     elif tool_name == "git_status":
-                                        await trigger_status("Checking git status...")
+                                        await trigger_status("Checking git status...", tool_name=tool_name)
                                     else:
-                                        await trigger_status(f"Running tool {tool_name}...")
+                                        await trigger_status(f"Running tool {tool_name}...", tool_name=tool_name)
 
                                     tool_output = execute_local_tool(tool_name, parsed_args)
 
@@ -525,23 +530,23 @@ class ChatAgent:
 
                                     # Provide progress updates
                                     if tool_name == "read_file":
-                                        await trigger_status(f"Reading file: {args.get('filepath', '')}...")
+                                        await trigger_status(f"Reading file: {args.get('filepath', '')}...", tool_name=tool_name, filepath=args.get('filepath'))
                                     elif tool_name == "write_file":
-                                        await trigger_status(f"Updating code: {args.get('filepath', '')}...")
+                                        await trigger_status(f"Updating code: {args.get('filepath', '')}...", tool_name=tool_name, filepath=args.get('filepath'))
                                     elif tool_name == "patch_file":
-                                        await trigger_status(f"Patching file: {args.get('filepath', '')}...")
+                                        await trigger_status(f"Patching file: {args.get('filepath', '')}...", tool_name=tool_name, filepath=args.get('filepath'))
                                     elif tool_name == "execute_command":
-                                        await trigger_status(f"Running command: {args.get('command', '')}...")
+                                        await trigger_status(f"Running command: {args.get('command', '')}...", tool_name=tool_name)
                                     elif tool_name == "git_clone" or tool_name == "clone_repository":
-                                        await trigger_status(f"Git cloning repository: {args.get('repo_url', '')}...")
+                                        await trigger_status(f"Git cloning repository: {args.get('repo_url', '')}...", tool_name=tool_name)
                                     elif tool_name == "git_checkout":
-                                        await trigger_status(f"Git checking out branch: {args.get('branch_name', '')}...")
+                                        await trigger_status(f"Git checking out branch: {args.get('branch_name', '')}...", tool_name=tool_name)
                                     elif tool_name == "git_pull":
-                                        await trigger_status("Git pulling updates...")
+                                        await trigger_status("Git pulling updates...", tool_name=tool_name)
                                     elif tool_name == "git_status":
-                                        await trigger_status("Checking git status...")
+                                        await trigger_status("Checking git status...", tool_name=tool_name)
                                     else:
-                                        await trigger_status(f"Running tool {tool_name}...")
+                                        await trigger_status(f"Running tool {tool_name}...", tool_name=tool_name)
 
                                     tool_output = execute_local_tool(tool_name, args)
 
@@ -621,23 +626,23 @@ class ChatAgent:
 
                                     # Provide progress updates
                                     if tool_name == "read_file":
-                                        await trigger_status(f"Reading file: {parsed_args.get('filepath', '')}...")
+                                        await trigger_status(f"Reading file: {parsed_args.get('filepath', '')}...", tool_name=tool_name, filepath=parsed_args.get('filepath'))
                                     elif tool_name == "write_file":
-                                        await trigger_status(f"Updating code: {parsed_args.get('filepath', '')}...")
+                                        await trigger_status(f"Updating code: {parsed_args.get('filepath', '')}...", tool_name=tool_name, filepath=parsed_args.get('filepath'))
                                     elif tool_name == "patch_file":
-                                        await trigger_status(f"Patching file: {parsed_args.get('filepath', '')}...")
+                                        await trigger_status(f"Patching file: {parsed_args.get('filepath', '')}...", tool_name=tool_name, filepath=parsed_args.get('filepath'))
                                     elif tool_name == "execute_command":
-                                        await trigger_status(f"Running command: {parsed_args.get('command', '')}...")
+                                        await trigger_status(f"Running command: {parsed_args.get('command', '')}...", tool_name=tool_name)
                                     elif tool_name == "git_clone" or tool_name == "clone_repository":
-                                        await trigger_status(f"Git cloning repository: {parsed_args.get('repo_url', '')}...")
+                                        await trigger_status(f"Git cloning repository: {parsed_args.get('repo_url', '')}...", tool_name=tool_name)
                                     elif tool_name == "git_checkout":
-                                        await trigger_status(f"Git checking out branch: {parsed_args.get('branch_name', '')}...")
+                                        await trigger_status(f"Git checking out branch: {parsed_args.get('branch_name', '')}...", tool_name=tool_name)
                                     elif tool_name == "git_pull":
-                                        await trigger_status("Git pulling updates...")
+                                        await trigger_status("Git pulling updates...", tool_name=tool_name)
                                     elif tool_name == "git_status":
-                                        await trigger_status("Checking git status...")
+                                        await trigger_status("Checking git status...", tool_name=tool_name)
                                     else:
-                                        await trigger_status(f"Running tool {tool_name}...")
+                                        await trigger_status(f"Running tool {tool_name}...", tool_name=tool_name)
 
                                     tool_output = execute_local_tool(tool_name, parsed_args)
 
@@ -710,23 +715,23 @@ class ChatAgent:
 
                                     # Provide progress updates
                                     if tool_name == "read_file":
-                                        await trigger_status(f"Reading file: {parsed_args.get('filepath', '')}...")
+                                        await trigger_status(f"Reading file: {parsed_args.get('filepath', '')}...", tool_name=tool_name, filepath=parsed_args.get('filepath'))
                                     elif tool_name == "write_file":
-                                        await trigger_status(f"Updating code: {parsed_args.get('filepath', '')}...")
+                                        await trigger_status(f"Updating code: {parsed_args.get('filepath', '')}...", tool_name=tool_name, filepath=parsed_args.get('filepath'))
                                     elif tool_name == "patch_file":
-                                        await trigger_status(f"Patching file: {parsed_args.get('filepath', '')}...")
+                                        await trigger_status(f"Patching file: {parsed_args.get('filepath', '')}...", tool_name=tool_name, filepath=parsed_args.get('filepath'))
                                     elif tool_name == "execute_command":
-                                        await trigger_status(f"Running command: {parsed_args.get('command', '')}...")
+                                        await trigger_status(f"Running command: {parsed_args.get('command', '')}...", tool_name=tool_name)
                                     elif tool_name == "git_clone" or tool_name == "clone_repository":
-                                        await trigger_status(f"Git cloning repository: {parsed_args.get('repo_url', '')}...")
+                                        await trigger_status(f"Git cloning repository: {parsed_args.get('repo_url', '')}...", tool_name=tool_name)
                                     elif tool_name == "git_checkout":
-                                        await trigger_status(f"Git checking out branch: {parsed_args.get('branch_name', '')}...")
+                                        await trigger_status(f"Git checking out branch: {parsed_args.get('branch_name', '')}...", tool_name=tool_name)
                                     elif tool_name == "git_pull":
-                                        await trigger_status("Git pulling updates...")
+                                        await trigger_status("Git pulling updates...", tool_name=tool_name)
                                     elif tool_name == "git_status":
-                                        await trigger_status("Checking git status...")
+                                        await trigger_status("Checking git status...", tool_name=tool_name)
                                     else:
-                                        await trigger_status(f"Running tool {tool_name}...")
+                                        await trigger_status(f"Running tool {tool_name}...", tool_name=tool_name)
 
                                     tool_output = execute_local_tool(tool_name, parsed_args)
 
