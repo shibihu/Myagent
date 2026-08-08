@@ -1122,9 +1122,13 @@
                 // Fetch cloned repositories list
                 fetchClonedReposList();
 
-                // Periodically fetch git changes
+                // Periodically fetch git changes and files tree
                 fetchGitChanges();
-                const gitInterval = setInterval(fetchGitChanges, 10000);
+                fetchFilesList();
+                const gitInterval = setInterval(() => {
+                    fetchGitChanges();
+                    fetchFilesList();
+                }, 10000);
 
                 const sUrl = window.NEXT_PUBLIC_SUPABASE_URL;
                 const sKey = window.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -1234,6 +1238,37 @@
                     clearInterval(gitInterval);
                 };
             }, []);
+
+            // Auto-close tabs of deleted files
+            useEffect(() => {
+                if (files && files.length > 0) {
+                    setOpenTabs(prevTabs => {
+                        const filtered = prevTabs.filter(t => files.includes(t));
+                        if (prevTabs.length !== filtered.length) {
+                            // Some tabs were closed because the files were deleted
+                            if (activeTab && !files.includes(activeTab)) {
+                                if (filtered.length > 0) {
+                                    setActiveTab(filtered[filtered.length - 1]);
+                                } else {
+                                    setActiveTab(null);
+                                    if (editorInstance) {
+                                        editorInstance.setValue("-- No file opened");
+                                    }
+                                }
+                            }
+                            return filtered;
+                        }
+                        return prevTabs;
+                    });
+                } else if (files && files.length === 0 && openTabs.length > 0) {
+                    // Files list is empty (e.g. all deleted or root cleared)
+                    setOpenTabs([]);
+                    setActiveTab(null);
+                    if (editorInstance) {
+                        editorInstance.setValue("-- No file opened");
+                    }
+                }
+            }, [files, activeTab, editorInstance]);
 
             // Setup Monaco Editor inside editorRef container
             useEffect(() => {
@@ -1565,6 +1600,27 @@
                                             return prev;
                                         });
                                         setStatusText(data.message);
+
+                                        // Auto-refresh file explorer tree dynamically during tool execution
+                                        if (data.tool_name) {
+                                            fetchFilesList();
+                                            fetchGitChanges();
+                                        }
+
+                                        // Auto-reload active editor tab if modified by AI
+                                        if (data.filepath && activeTab && data.filepath === activeTab) {
+                                            fetch(`/api/ide/file?path=${encodeURIComponent(activeTab)}`)
+                                                .then(res => res.ok ? res.json() : null)
+                                                .then(fileData => {
+                                                    if (fileData && fileData.status === "success" && editorInstance) {
+                                                        const currentVal = editorInstance.getValue();
+                                                        if (fileData.content !== currentVal) {
+                                                            editorInstance.setValue(fileData.content);
+                                                            setDirtyTabs(prev => prev.filter(t => t !== activeTab));
+                                                        }
+                                                    }
+                                                });
+                                        }
                                     } else if (data.type === "final") {
                                         setIsWorkflowCompleted(true);
                                         aiReply = data.reply;
@@ -1577,6 +1633,24 @@
                                             finalTitle = data.title;
                                             setChatTitle(data.title);
                                             localStorage.setItem("myagent_chat_title", data.title);
+                                        }
+
+                                        // Auto-refresh on stream completion
+                                        fetchFilesList();
+                                        fetchGitChanges();
+
+                                        if (activeTab) {
+                                            fetch(`/api/ide/file?path=${encodeURIComponent(activeTab)}`)
+                                                .then(res => res.ok ? res.json() : null)
+                                                .then(fileData => {
+                                                    if (fileData && fileData.status === "success" && editorInstance) {
+                                                        const currentVal = editorInstance.getValue();
+                                                        if (fileData.content !== currentVal) {
+                                                            editorInstance.setValue(fileData.content);
+                                                            setDirtyTabs(prev => prev.filter(t => t !== activeTab));
+                                                        }
+                                                    }
+                                                });
                                         }
                                     } else if (data.type === "error") {
                                         triggerToast(data.message, "error");
