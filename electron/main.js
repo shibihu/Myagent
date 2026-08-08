@@ -5,6 +5,30 @@ const pty = require('node-pty');
 
 let mainWindow;
 let ptyProcess;
+let activeWorkspaceDir = process.env.WORKSPACE_DIR || path.join(__dirname, '..', 'workspace');
+let fsWatcher;
+
+function startWatchingWorkspace() {
+  const fs = require('fs');
+  if (fsWatcher) {
+    try {
+      fsWatcher.close();
+    } catch (e) {}
+  }
+
+  if (fs.existsSync(activeWorkspaceDir)) {
+    try {
+      fsWatcher = fs.watch(activeWorkspaceDir, { recursive: true }, (eventType, filename) => {
+        if (mainWindow) {
+          mainWindow.webContents.send('workspace:file-changed', { eventType, filename });
+        }
+      });
+      console.log(`[FS Watcher] Started watching directory: ${activeWorkspaceDir}`);
+    } catch (e) {
+      console.error(`[FS Watcher] Failed to watch ${activeWorkspaceDir}:`, e);
+    }
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -30,14 +54,11 @@ function createWindow() {
 function setupPty() {
   const shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
 
-  // Set default directory to workspace if exists, otherwise home dir
-  const workspaceDir = process.env.WORKSPACE_DIR || path.join(__dirname, '..', 'workspace');
-
   ptyProcess = pty.spawn(shell, [], {
     name: 'xterm-color',
     cols: 80,
     rows: 24,
-    cwd: workspaceDir,
+    cwd: activeWorkspaceDir,
     env: process.env
   });
 
@@ -51,6 +72,7 @@ function setupPty() {
 
 app.whenReady().then(() => {
   setupPty();
+  startWatchingWorkspace();
   createWindow();
 
   app.on('activate', function () {
@@ -82,6 +104,9 @@ ipcMain.handle('set-active-workspace', async (event, newWorkspacePath) => {
     : path.join(__dirname, '..', newWorkspacePath);
 
   if (fs.existsSync(resolvedPath)) {
+    activeWorkspaceDir = resolvedPath;
+    startWatchingWorkspace();
+
     if (ptyProcess) {
       try {
         ptyProcess.kill();
@@ -114,5 +139,77 @@ ipcMain.handle('set-active-workspace', async (event, newWorkspacePath) => {
     return { status: 'success', active_path: resolvedPath };
   } else {
     return { status: 'error', message: `Directory does not exist: ${resolvedPath}` };
+  }
+});
+
+// Direct Disk Persistence IPC Handlers (File CRUD operations)
+ipcMain.handle('fs:create-file', async (event, { filepath }) => {
+  const fs = require('fs').promises;
+  const targetPath = path.isAbsolute(filepath) ? filepath : path.join(activeWorkspaceDir, filepath);
+  try {
+    const parentDir = path.dirname(targetPath);
+    await fs.mkdir(parentDir, { recursive: true });
+    await fs.writeFile(targetPath, '', 'utf-8');
+    return { status: 'success', message: `Created file ${filepath} successfully.` };
+  } catch (err) {
+    return { status: 'error', message: err.message };
+  }
+});
+
+ipcMain.handle('fs:create-folder', async (event, { folderPath }) => {
+  const fs = require('fs').promises;
+  const targetPath = path.isAbsolute(folderPath) ? folderPath : path.join(activeWorkspaceDir, folderPath);
+  try {
+    await fs.mkdir(targetPath, { recursive: true });
+    return { status: 'success', message: `Created folder ${folderPath} successfully.` };
+  } catch (err) {
+    return { status: 'error', message: err.message };
+  }
+});
+
+ipcMain.handle('fs:save-file', async (event, { filepath, content }) => {
+  const fs = require('fs').promises;
+  const targetPath = path.isAbsolute(filepath) ? filepath : path.join(activeWorkspaceDir, filepath);
+  try {
+    const parentDir = path.dirname(targetPath);
+    await fs.mkdir(parentDir, { recursive: true });
+    await fs.writeFile(targetPath, content, 'utf-8');
+    return { status: 'success', message: 'Saved successfully.' };
+  } catch (err) {
+    return { status: 'error', message: err.message };
+  }
+});
+
+ipcMain.handle('fs:read-file', async (event, { filepath }) => {
+  const fs = require('fs').promises;
+  const targetPath = path.isAbsolute(filepath) ? filepath : path.join(activeWorkspaceDir, filepath);
+  try {
+    const content = await fs.readFile(targetPath, 'utf-8');
+    return { status: 'success', content };
+  } catch (err) {
+    return { status: 'error', message: err.message };
+  }
+});
+
+ipcMain.handle('fs:delete', async (event, { path: itemPath }) => {
+  const fs = require('fs').promises;
+  const targetPath = path.isAbsolute(itemPath) ? itemPath : path.join(activeWorkspaceDir, itemPath);
+  try {
+    await fs.rm(targetPath, { recursive: true, force: true });
+    return { status: 'success', message: 'Deleted successfully.' };
+  } catch (err) {
+    return { status: 'error', message: err.message };
+  }
+});
+
+ipcMain.handle('fs:rename', async (event, { oldPath, newPath }) => {
+  const fs = require('fs').promises;
+  const targetOld = path.isAbsolute(oldPath) ? oldPath : path.join(activeWorkspaceDir, oldPath);
+  const targetNew = path.isAbsolute(newPath) ? newPath : path.join(activeWorkspaceDir, newPath);
+  try {
+    await fs.rename(targetOld, targetNew);
+    return { status: 'success', message: 'Renamed successfully.' };
+  } catch (err) {
+    return { status: 'error', message: err.message };
   }
 });

@@ -52,3 +52,29 @@ INFO:     127.0.0.1:44634 - "WebSocket /ws/terminal" [accepted]
 INFO:     connection open
 INFO:     127.0.0.1:44638 - "WebSocket /ws/terminal" [accepted]
 INFO:     connection open
+[WS Auth] Connection rejected: No token found in cookies or query params.
+[WS Auth] Connection rejected: No token found in cookies or query params.
+[WS Auth] Connection rejected: No token found in cookies or query params.
+[WS Auth] Connection rejected: No token found in cookies or query params.
+[WS Auth] Connection rejected: No token found in cookies or query params.
+INFO:     127.0.0.1:41112 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41112 - "GET /api/ssh/servers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41124 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+[WS Auth] Connection rejected: No token found in cookies or query params.
+INFO:     127.0.0.1:41130 - "GET /api/git/list-repos HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41134 - "GET /api/git/changes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41140 - "GET /api/ide/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41142 - "GET /auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41144 - "GET /chats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41134 - "GET /api/ide/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41154 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:41160 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:41174 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:39126 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:39138 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open

@@ -1014,6 +1014,7 @@
             const [files, setFiles] = useState([]);
             const [fileTree, setFileTree] = useState(null);
             const [expandedFolders, setExpandedFolders] = useState({});
+            const [inlineCreation, setInlineCreation] = useState(null);
             const [clonedRepos, setClonedRepos] = useState([]);
             const [activeRepo, setActiveRepo] = useState(null);
             const [openTabs, setOpenTabs] = useState([]);
@@ -1270,6 +1271,49 @@
                 }
             }, [files, activeTab, editorInstance]);
 
+            // Listen to dynamic disk changes in Electron
+            useEffect(() => {
+                if (window.terminalAPI && window.terminalAPI.onFileChanged) {
+                    window.terminalAPI.onFileChanged((data) => {
+                        console.log("[Electron Disk Change Detected]", data);
+                        // Refresh File tree
+                        fetchFilesList();
+                        fetchGitChanges();
+
+                        // If the modified file is currently open, re-fetch active editor content!
+                        if (data.filename) {
+                            const changedPath = data.filename.replace(/\\/g, '/');
+                            if (activeTab && (activeTab === changedPath || activeTab.endsWith(changedPath))) {
+                                if (window.terminalAPI.readFile) {
+                                    window.terminalAPI.readFile(activeTab)
+                                        .then(fileData => {
+                                            if (fileData && fileData.status === "success" && editorInstance) {
+                                                const currentVal = editorInstance.getValue();
+                                                if (fileData.content !== currentVal) {
+                                                    editorInstance.setValue(fileData.content);
+                                                    setDirtyTabs(prev => prev.filter(t => t !== activeTab));
+                                                }
+                                            }
+                                        });
+                                } else {
+                                    fetch(`/api/ide/file?path=${encodeURIComponent(activeTab)}`)
+                                        .then(res => res.ok ? res.json() : null)
+                                        .then(fileData => {
+                                            if (fileData && fileData.status === "success" && editorInstance) {
+                                                const currentVal = editorInstance.getValue();
+                                                if (fileData.content !== currentVal) {
+                                                    editorInstance.setValue(fileData.content);
+                                                    setDirtyTabs(prev => prev.filter(t => t !== activeTab));
+                                                }
+                                            }
+                                        });
+                                }
+                            }
+                        }
+                    });
+                }
+            }, [activeTab, editorInstance]);
+
             // Setup Monaco Editor inside editorRef container
             useEffect(() => {
                 if (!editorRef.current) return;
@@ -1348,6 +1392,30 @@
             // Handle switching files (activeTab)
             useEffect(() => {
                 if (!editorInstance || !monacoInstance || !activeTab) return;
+
+                if (window.terminalAPI && window.terminalAPI.readFile) {
+                    window.terminalAPI.readFile(activeTab)
+                        .then(res => {
+                            if (res.status === "success") {
+                                const model = monacoInstance.editor.createModel(
+                                    res.content,
+                                    getLanguageFromExtension(activeTab)
+                                );
+                                editorInstance.setModel(model);
+                                setStatusText(`Opened (Local Disk): ${activeTab}`);
+
+                                setTimeout(() => {
+                                    setDirtyTabs(prev => prev.filter(t => t !== activeTab));
+                                }, 50);
+                            } else {
+                                triggerToast(`Failed to open file: ${res.message}`, "error");
+                            }
+                        })
+                        .catch(err => {
+                            triggerToast(`Disk read error: ${err.message}`, "error");
+                        });
+                    return;
+                }
 
                 // Load file content
                 fetch(`/api/ide/file?path=${encodeURIComponent(activeTab)}`)
@@ -1448,33 +1516,59 @@
             };
 
             const createNewFileOrFolder = (type) => {
-                const promptMsg = type === "file"
-                    ? "Enter new file path (relative to workspace root, e.g. src/utils.py):"
-                    : "Enter new folder path (relative to workspace root, e.g. src/components):";
-                const path = prompt(promptMsg);
-                if (!path || !path.trim()) return;
+                setInlineCreation({ type, value: "" });
+            };
 
-                fetch("/api/ide/create", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ path: path.trim(), type: type })
-                })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.status === "success") {
-                        triggerToast(data.message, "success");
-                        fetchFilesList();
-                        if (type === "file") {
-                            handleSelectFile(path.trim());
+            const submitInlineCreation = () => {
+                if (!inlineCreation || !inlineCreation.value.trim()) {
+                    setInlineCreation(null);
+                    return;
+                }
+                const path = inlineCreation.value.trim();
+                const type = inlineCreation.type;
+                setInlineCreation(null);
+
+                if (window.terminalAPI && (window.terminalAPI.createFile || window.terminalAPI.createFolder)) {
+                    const action = type === "file"
+                        ? window.terminalAPI.createFile(path)
+                        : window.terminalAPI.createFolder(path);
+
+                    action.then(res => {
+                        if (res.status === "success") {
+                            triggerToast(res.message, "success");
+                            fetchFilesList();
+                            if (type === "file") {
+                                handleSelectFile(path);
+                            }
+                        } else {
+                            triggerToast("Failed to create: " + res.message, "error");
                         }
-                    } else {
-                        triggerToast("Failed to create: " + (data.detail || data.message || "Unknown error"), "error");
-                    }
-                })
-                .catch(err => {
-                    console.error(err);
-                    triggerToast("Network error creating item", "error");
-                });
+                    }).catch(err => {
+                        triggerToast("Direct disk operation failed: " + err.message, "error");
+                    });
+                } else {
+                    fetch("/api/ide/create", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ path, type })
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.status === "success") {
+                            triggerToast(data.message, "success");
+                            fetchFilesList();
+                            if (type === "file") {
+                                handleSelectFile(path);
+                            }
+                        } else {
+                            triggerToast("Failed to create: " + (data.detail || data.message || "Unknown error"), "error");
+                        }
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        triggerToast("Network error creating item", "error");
+                    });
+                }
             };
 
             // Fetch chat sessions
@@ -1502,6 +1596,24 @@
                 if (autosaveTimeoutRef.current) {
                     clearTimeout(autosaveTimeoutRef.current);
                 }
+
+                if (window.terminalAPI && window.terminalAPI.saveFile) {
+                    return window.terminalAPI.saveFile(filepath, content)
+                        .then(res => {
+                            if (res.status === "success") {
+                                setDirtyTabs(prev => prev.filter(t => t !== filepath));
+                                fetchGitChanges();
+                                fetchFilesList();
+                                return true;
+                            }
+                            return false;
+                        })
+                        .catch(err => {
+                            console.error("Save local disk failed:", err);
+                            return false;
+                        });
+                }
+
                 return fetch('/api/ide/file', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -2143,6 +2255,29 @@
                                                             </button>
                                                         </div>
                                                     </div>
+                                                    {inlineCreation && (
+                                                        <div className="px-2 py-1 flex items-center space-x-2 bg-surfaceBg border border-brandBlue/50 rounded mb-2 mx-1">
+                                                            <i className={inlineCreation.type === 'file' ? 'fa-regular fa-file text-brandBlue text-[11px]' : 'fa-regular fa-folder text-brandBlue text-[11px]'}></i>
+                                                            <input
+                                                                type="text"
+                                                                autoFocus
+                                                                value={inlineCreation.value}
+                                                                onChange={(e) => setInlineCreation({ ...inlineCreation, value: e.target.value })}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === 'Enter') {
+                                                                        submitInlineCreation();
+                                                                    } else if (e.key === 'Escape') {
+                                                                        setInlineCreation(null);
+                                                                    }
+                                                                }}
+                                                                onBlur={() => {
+                                                                    setTimeout(() => setInlineCreation(null), 150);
+                                                                }}
+                                                                placeholder={inlineCreation.type === 'file' ? "new-file.py" : "new-folder"}
+                                                                className="bg-transparent text-xs text-white border-none outline-none flex-1 w-full"
+                                                            />
+                                                        </div>
+                                                    )}
                                                     {fileTree ? (
                                                         <FileNode
                                                             node={fileTree}
