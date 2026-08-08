@@ -1414,6 +1414,19 @@
                             localStorage.removeItem("myagent_active_repo");
                             triggerToast(`Switched workspace context to Root Workspace`, "success");
                         }
+
+                        // Electron dynamic terminal cwd synchronization
+                        if (window.terminalAPI && window.terminalAPI.setActiveWorkspace) {
+                            const relativePath = repoName ? `workspace/${repoName}` : 'workspace';
+                            window.terminalAPI.setActiveWorkspace(relativePath)
+                                .then(workspaceRes => {
+                                    console.log("[Electron] Terminal directory synchronized:", workspaceRes);
+                                })
+                                .catch(workspaceErr => {
+                                    console.error("[Electron] Terminal directory synchronization failed:", workspaceErr);
+                                });
+                        }
+
                         // Refresh everything instantly
                         fetchFilesList();
                         fetchGitChanges();
@@ -1915,13 +1928,13 @@
                         setShowGithubModal(false);
                         localStorage.setItem("myagent_github_token", githubToken);
                         if (data.repo_name) {
-                            localStorage.setItem("myagent_active_repo", data.repo_name);
-                            setActiveRepo(data.repo_name);
+                            switchActiveRepo(data.repo_name);
+                        } else {
+                            // Refresh tree and cloned repos list
+                            fetchFilesList();
+                            fetchGitChanges();
+                            fetchClonedReposList();
                         }
-                        // Refresh tree and cloned repos list
-                        fetchFilesList();
-                        fetchGitChanges();
-                        fetchClonedReposList();
                     } else {
                         triggerToast(data.message || "Failed to clone", "error");
                     }

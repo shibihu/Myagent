@@ -1,0 +1,54 @@
+INFO:     Started server process [2494775]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+[Local-First DB] Successfully initialized. Loaded 56 chats, 0 memories, and 2 users.
+[DB-Health] Database connection skipped: DATABASE_URL not set in environment.
+INFO:     127.0.0.1:59894 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33844 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33844 - "GET /api/ssh/servers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47530 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+[WS Auth] Connection rejected: No token found in cookies or query params.
+INFO:     127.0.0.1:47544 - "GET /api/git/list-repos HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47556 - "GET /api/git/changes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47564 - "GET /api/ide/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47568 - "GET /auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47584 - "GET /chats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47556 - "GET /api/ide/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47590 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:47598 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:47608 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:47624 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:47638 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+[WS Auth] Connection rejected: No token found in cookies or query params.
+[WS Auth] Connection rejected: No token found in cookies or query params.
+[WS Auth] Connection rejected: No token found in cookies or query params.
+[WS Auth] Connection rejected: No token found in cookies or query params.
+[WS Auth] Connection rejected: No token found in cookies or query params.
+INFO:     127.0.0.1:33678 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33678 - "GET /api/ssh/servers HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44554 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+[WS Auth] Connection rejected: No token found in cookies or query params.
+INFO:     127.0.0.1:44570 - "GET /api/git/list-repos HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44576 - "GET /api/git/changes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44584 - "GET /api/ide/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44598 - "GET /auth/me HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44604 - "GET /chats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44576 - "GET /api/ide/files HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44610 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:44616 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:44622 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:44634 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:44638 - "WebSocket /ws/terminal" [accepted]
+INFO:     connection open
