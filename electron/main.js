@@ -74,3 +74,45 @@ ipcMain.on('terminal-resize', (event, { cols, rows }) => {
     ptyProcess.resize(cols, rows);
   }
 });
+
+ipcMain.handle('set-active-workspace', async (event, newWorkspacePath) => {
+  const fs = require('fs');
+  const resolvedPath = path.isAbsolute(newWorkspacePath)
+    ? newWorkspacePath
+    : path.join(__dirname, '..', newWorkspacePath);
+
+  if (fs.existsSync(resolvedPath)) {
+    if (ptyProcess) {
+      try {
+        ptyProcess.kill();
+      } catch (e) {
+        console.error('Failed to kill active PTY:', e);
+      }
+    }
+
+    const shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';
+    ptyProcess = pty.spawn(shell, [], {
+      name: 'xterm-color',
+      cols: 80,
+      rows: 24,
+      cwd: resolvedPath,
+      env: process.env
+    });
+
+    ptyProcess.onData((data) => {
+      if (mainWindow) {
+        mainWindow.webContents.send('terminal-incoming-data', data);
+      }
+    });
+
+    const clearCmd = os.platform() === 'win32' ? 'Clear-Host\r' : 'clear\r';
+    if (mainWindow) {
+      mainWindow.webContents.send('terminal-incoming-data', `\r\n\x1b[1;32m[Electron] Switched terminal workspace directory to: ${resolvedPath}\x1b[0m\r\n`);
+    }
+    ptyProcess.write(clearCmd);
+
+    return { status: 'success', active_path: resolvedPath };
+  } else {
+    return { status: 'error', message: `Directory does not exist: ${resolvedPath}` };
+  }
+});
