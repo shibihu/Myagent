@@ -6,6 +6,7 @@ import logging
 import asyncio
 import json
 import base64
+import tempfile
 
 # Import terminal_manager ให้ถูกต้องตามโครงสร้างโปรเจกต์ของคุณ
 try:
@@ -358,38 +359,99 @@ def write_file_tool(filepath: str, content: str) -> dict:
 def list_directory_tool(path: str = ".") -> dict:
     return view_dir_tool(path)
 
-async def clone_repository_tool(repo_url: str) -> dict:
+def clone_repository_tool(repo_url: str) -> dict:
+    """Clones a remote git repository into the workspace.
+
+    Safety invariants:
+    - The clone always runs synchronously to completion (or failure) before this
+      function returns; nothing is 'fired and forgotten' into a terminal session.
+    - The repo is cloned into a temporary staging directory first. Only after the
+      clone is verified to have actually produced a real git repository is it moved
+      into its final location inside the workspace.
+    - `ACTIVE_REPO_NAME` (the global that controls the active workspace directory)
+      is ONLY updated after a verified, successful clone. On any failure, the active
+      repo state is left untouched and any partial/empty directories created during
+      the attempt are cleaned up.
+    """
+    global ACTIVE_REPO_NAME
+
+    if not repo_url or not repo_url.strip():
+        return {"status": "error", "message": "No repository URL was provided."}
+
+    if shutil.which("git") is None:
+        return {"status": "error", "message": "Git CLI is not available on this system."}
+
+    repo_name = repo_url.rstrip("/").split("/")[-1]
+    if repo_name.endswith(".git"):
+        repo_name = repo_name[:-4]
+    if not repo_name:
+        return {"status": "error", "message": "Could not determine a repository name from the provided URL."}
+
+    base_ws = ensure_workspace()
+    final_path = os.path.abspath(os.path.join(base_ws, repo_name))
+    if not final_path.startswith(base_ws):
+        return {"status": "error", "message": "Resolved repository path escapes the workspace directory."}
+
+    staging_dir = None
     try:
-        repo_name = repo_url.rstrip("/").split("/")[-1]
-        if repo_name.endswith(".git"):
-            repo_name = repo_name[:-4]
+        # Clone into an isolated staging directory so the real destination
+        # (and the active workspace state) is never touched until we know
+        # the clone actually succeeded.
+        staging_dir = tempfile.mkdtemp(prefix=".clone_staging_", dir=base_ws)
 
-        session_id = "default_session"
-        session = terminal_manager.get_session(session_id) if terminal_manager else None
+        process = subprocess.run(
+            ["git", "clone", repo_url, staging_dir],
+            cwd=base_ws,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=120
+        )
 
-        if session:
-            command = f"git clone {repo_url} && cd {repo_name}\n"
-            await session.write(command)
+        if process.returncode != 0:
             return {
-                "status": "success", 
-                "message": f"Sent command to terminal: git clone and cd to {repo_name}"
-            }
-        else:
-            subprocess.run(
-                ["git", "clone", repo_url], 
-                cwd=WORKSPACE_DIR, 
-                check=True, 
-                capture_output=True
-            )
-            return {
-                "status": "success", 
-                "message": f"Cloned {repo_name} successfully into workspace."
+                "status": "error",
+                "message": f"Git clone failed: {truncate_text(process.stderr or process.stdout or 'Unknown git error.')}"
             }
 
+        # Sanity check: don't trust the exit code alone. Confirm a real repo landed on disk.
+        if not os.path.isdir(os.path.join(staging_dir, ".git")):
+            return {
+                "status": "error",
+                "message": "Git reported success but no .git directory was found after cloning; aborting."
+            }
+
+        # Destination is clear-to-write: remove any pre-existing (e.g. stale/empty) folder first.
+        if os.path.exists(final_path):
+            shutil.rmtree(final_path)
+
+        shutil.move(staging_dir, final_path)
+        staging_dir = None  # Successfully moved; nothing left to clean up.
+
+        # Only now, with a verified repository on disk, switch the active workspace context.
+        ACTIVE_REPO_NAME = repo_name
+
+        return {
+            "status": "success",
+            "message": f"Cloned '{repo_name}' successfully and switched the active workspace to it.",
+            "repo_name": repo_name,
+            "active_repo": ACTIVE_REPO_NAME
+        }
+
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "message": "Git clone timed out."}
     except subprocess.CalledProcessError as e:
-        return {"status": "error", "message": f"Git Error: {e.stderr.decode()}"}
+        stderr = e.stderr.decode() if isinstance(e.stderr, (bytes, bytearray)) else (e.stderr or "")
+        return {"status": "error", "message": f"Git Error: {stderr}"}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": f"Unexpected error during clone: {str(e)}"}
+    finally:
+        # Guarantee no empty/partial staging directory is left behind on failure.
+        if staging_dir and os.path.exists(staging_dir):
+            try:
+                shutil.rmtree(staging_dir)
+            except Exception as cleanup_err:
+                logger.warning("Failed to clean up clone staging directory %s: %s", staging_dir, cleanup_err)
 
 git_clone_tool = clone_repository_tool
 

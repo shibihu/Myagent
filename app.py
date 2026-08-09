@@ -719,6 +719,7 @@ async def api_github_clone(req: GitHubCloneRequest):
         import zipfile
         import io
         import shutil
+        import subprocess
         from agent.tools import WORKSPACE_DIR, ensure_workspace
 
         repo_url = req.repo_url
@@ -743,25 +744,32 @@ async def api_github_clone(req: GitHubCloneRequest):
         # Fetch repository zipball from GitHub API (redirects to default branch)
         zipball_url = f"https://api.github.com/repos/{owner}/{repo}/zipball"
 
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            resp = await client.get(zipball_url, headers=headers)
-            if resp.status_code != 200:
-                raise Exception(f"Failed to fetch zipball from GitHub: HTTP {resp.status_code} - {resp.text}")
+        # Everything below writes to disk. target_repo_dir is only created once we're
+        # sure we actually have zip bytes to extract, and it is fully removed again on
+        # any failure so we never leave an empty/partial folder switched-to as active.
+        ensure_workspace()
+        target_repo_dir = os.path.join(WORKSPACE_DIR, repo)
+        extraction_started = False
 
-            # Atomic extraction into target_repo_dir under WORKSPACE_DIR
-            ensure_workspace()
-            target_repo_dir = os.path.join(WORKSPACE_DIR, repo)
-            if os.path.exists(target_repo_dir):
-                try:
-                    shutil.rmtree(target_repo_dir)
-                except Exception:
-                    pass
-            os.makedirs(target_repo_dir, exist_ok=True)
+        try:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                resp = await client.get(zipball_url, headers=headers)
+                if resp.status_code != 200:
+                    raise Exception(f"Failed to fetch zipball from GitHub: HTTP {resp.status_code} - {resp.text}")
 
-            zip_bytes = resp.content
-            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-                members = z.namelist()
-                if members:
+                zip_bytes = resp.content
+
+                # Only now do we touch the filesystem, since we know we have real content.
+                if os.path.exists(target_repo_dir):
+                    shutil.rmtree(target_repo_dir, ignore_errors=True)
+                os.makedirs(target_repo_dir, exist_ok=True)
+                extraction_started = True
+
+                with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+                    members = z.namelist()
+                    if not members:
+                        raise Exception("GitHub zipball archive was empty.")
+
                     # Strip the dynamic top-level github folder (e.g. 'owner-repo-sha/')
                     top_dir = members[0].split('/')[0]
                     for member in members:
@@ -779,37 +787,47 @@ async def api_github_clone(req: GitHubCloneRequest):
                         else:
                             os.makedirs(os.path.dirname(target_path), exist_ok=True)
                             _write_and_sync_file(target_path, z.read(member), binary=True)
-        if shutil.which("git") is not None:
-            try:
-                subprocess.run("git init", shell=True, cwd=target_repo_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            if not os.listdir(target_repo_dir):
+                raise Exception("Extraction produced no files; aborting.")
+
+            if shutil.which("git") is not None:
+                init_result = subprocess.run("git init", shell=True, cwd=target_repo_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                if init_result.returncode != 0:
+                    raise Exception(f"git init failed: {init_result.stderr}")
                 subprocess.run(f"git remote add origin {repo_url}", shell=True, cwd=target_repo_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 # To prevent git status from showing all initial files as untracked, we can commit them locally as clean baseline
                 subprocess.run("git config user.name 'MyAgent Bot'", shell=True, cwd=target_repo_dir)
                 subprocess.run("git config user.email 'myagent@bot.local'", shell=True, cwd=target_repo_dir)
                 subprocess.run("git add .", shell=True, cwd=target_repo_dir)
                 subprocess.run("git commit -m 'Initial baseline commit'", shell=True, cwd=target_repo_dir)
-            except Exception as e:
-                print(f"[Git Init Baseline Exception]: {e}")
 
-        # Save GitHub Configuration for REST Git tools fallback
-        import json
-        config_data = {
-            "owner": owner,
-            "repo": repo,
-            "token": req.token
-        }
-        config_path = os.path.join(target_repo_dir, ".github_config.json")
-        _write_and_sync_file(config_path, json.dumps(config_data, indent=2), binary=False)
+            # Save GitHub Configuration for REST Git tools fallback
+            import json
+            config_data = {
+                "owner": owner,
+                "repo": repo,
+                "token": req.token
+            }
+            config_path = os.path.join(target_repo_dir, ".github_config.json")
+            _write_and_sync_file(config_path, json.dumps(config_data, indent=2), binary=False)
 
-        # Set active repository name immediately
-        import agent.tools as tools
-        tools.ACTIVE_REPO_NAME = repo
+            # Only now, with a verified repository fully extracted and initialized on
+            # disk, do we switch the active repository / workspace state.
+            import agent.tools as tools
+            tools.ACTIVE_REPO_NAME = repo
 
-        return {
-            "status": "success",
-            "message": f"Successfully cloned and extracted {owner}/{repo} into sub-workspace directory.",
-            "repo_name": repo
-        }
+            return {
+                "status": "success",
+                "message": f"Successfully cloned and extracted {owner}/{repo} into sub-workspace directory.",
+                "repo_name": repo
+            }
+        except Exception as inner_e:
+            # Clean up any partially-written directory so we never leave an empty
+            # or half-populated folder behind, and never switch the active repo to it.
+            if extraction_started and os.path.exists(target_repo_dir):
+                shutil.rmtree(target_repo_dir, ignore_errors=True)
+            raise inner_e
     except Exception as e:
         return {
             "status": "error",
@@ -880,13 +898,25 @@ async def api_git_list_repos():
 
 @app.post("/api/git/switch-repo")
 async def api_git_switch_repo(req: SwitchRepoRequest):
-    """Switches the active workspace subdirectory repository context."""
+    """Switches the active workspace subdirectory repository context.
+
+    This only ever points the active workspace at a repository that already exists
+    on disk (i.e. was actually cloned). It never creates a placeholder directory,
+    since doing so would silently leave the app operating inside an empty folder.
+    """
     import agent.tools as tools
     if req.repo_name:
         base = tools.ensure_workspace()
-        target = os.path.join(base, req.repo_name)
-        if not os.path.exists(target):
-            os.makedirs(target, exist_ok=True)
+        target = os.path.abspath(os.path.join(base, req.repo_name))
+        if not target.startswith(os.path.abspath(base)):
+            raise HTTPException(status_code=400, detail="Invalid repository name.")
+
+        if not os.path.isdir(target) or not os.listdir(target):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repository '{req.repo_name}' was not found in the workspace. Clone it first before switching to it."
+            )
+
         tools.ACTIVE_REPO_NAME = req.repo_name
     else:
         tools.ACTIVE_REPO_NAME = None
