@@ -306,6 +306,11 @@ async def github_callback(code: str):
             raise e
         raise HTTPException(status_code=500, detail=f"Authentication flow encountered fatal error: {str(e)}")
 
+@app.get("/health")
+async def health_check():
+    """Lightweight health check endpoint for backend availability verification (Electron startup polling)."""
+    return {"status": "ok", "service": "myagent-backend"}
+
 @app.get("/auth/me")
 async def get_me(request: Request):
     """Protected route to fetch authenticated user profile details, returning 200 OK with authenticated: false if unauthenticated."""

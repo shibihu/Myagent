@@ -1,12 +1,132 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
 const pty = require('node-pty');
+const { spawn } = require('child_process');
 
 let mainWindow;
 let ptyProcess;
+let backendProcess;
 let activeWorkspaceDir = process.env.WORKSPACE_DIR || path.join(__dirname, '..', 'workspace');
 let fsWatcher;
+
+// Configuration for backend
+const BACKEND_PORT = 5000;
+const BACKEND_HOST = '127.0.0.1';
+const BACKEND_URL = `http://${BACKEND_HOST}:${BACKEND_PORT}`;
+const HEALTH_CHECK_TIMEOUT = 30000; // 30 seconds max wait
+const HEALTH_CHECK_INTERVAL = 500; // Poll every 500ms
+
+// Kills any existing process on the backend port (Windows only)
+async function killProcessOnPort() {
+  return new Promise((resolve) => {
+    if (os.platform() !== 'win32') {
+      resolve();
+      return;
+    }
+    
+    console.log(`[Backend] Attempting to free port ${BACKEND_PORT}...`);
+    
+    const { exec } = require('child_process');
+    // Use a more robust approach with PowerShell
+    const cmd = `Get-NetTCPConnection -LocalPort ${BACKEND_PORT} -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }`;
+    
+    exec(`powershell -Command "${cmd}"`, (err) => {
+      // Don't care about errors, just move forward
+      setTimeout(resolve, 1000);
+    });
+  });
+}
+
+// Spawns the FastAPI backend process
+function spawnBackendProcess() {
+  return new Promise(async (resolve, reject) => {
+    try {
+      // Clean up any existing process on the port first
+      await killProcessOnPort();
+      
+      console.log('[Backend] Spawning FastAPI server...');
+      
+      const pythonExe = os.platform() === 'win32' ? 'python' : 'python3';
+      
+      // Use uvicorn to run the FastAPI app
+      backendProcess = spawn(pythonExe, ['-m', 'uvicorn', 'app:app', '--host', BACKEND_HOST, '--port', BACKEND_PORT.toString(), '--log-level', 'info'], {
+        cwd: path.join(__dirname, '..'),
+        env: {
+          ...process.env,
+          PYTHONUNBUFFERED: '1'
+        },
+        stdio: 'pipe'
+      });
+
+      backendProcess.stdout.on('data', (data) => {
+        console.log(`[FastAPI] ${data.toString().trim()}`);
+      });
+
+      backendProcess.stderr.on('data', (data) => {
+        console.error(`[FastAPI Error] ${data.toString().trim()}`);
+      });
+
+      backendProcess.on('error', (err) => {
+        console.error('[Backend] Failed to spawn process:', err);
+        reject(err);
+      });
+
+      backendProcess.on('exit', (code) => {
+        console.log(`[Backend] Process exited with code ${code}`);
+        if (mainWindow) {
+          mainWindow.webContents.send('backend:disconnected', { code });
+        }
+      });
+
+      // Give backend a moment to start before polling
+      setTimeout(() => {
+        pollBackendHealth(resolve, reject);
+      }, 1500);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+// Polls the /health endpoint until backend is ready
+function pollBackendHealth(resolve, reject, elapsed = 0) {
+  const http = require('http');
+  
+  const healthCheckReq = http.get(`${BACKEND_URL}/health`, (res) => {
+    if (res.statusCode === 200) {
+      console.log('[Backend] Health check passed - backend is ready!');
+      resolve();
+      return;
+    }
+    scheduleNextPoll(resolve, reject, elapsed);
+  });
+
+  healthCheckReq.on('error', () => {
+    scheduleNextPoll(resolve, reject, elapsed);
+  });
+
+  healthCheckReq.setTimeout(2000, () => {
+    healthCheckReq.destroy();
+    scheduleNextPoll(resolve, reject, elapsed);
+  });
+}
+
+function scheduleNextPoll(resolve, reject, elapsed) {
+  const newElapsed = elapsed + HEALTH_CHECK_INTERVAL;
+  
+  if (newElapsed > HEALTH_CHECK_TIMEOUT) {
+    const err = new Error(`Backend health check failed after ${HEALTH_CHECK_TIMEOUT / 1000}s`);
+    console.error('[Backend]', err.message);
+    reject(err);
+    return;
+  }
+
+  setTimeout(() => {
+    pollBackendHealth(resolve, reject, newElapsed);
+  }, HEALTH_CHECK_INTERVAL);
+}
 
 function startWatchingWorkspace() {
   const fs = require('fs');
@@ -91,9 +211,23 @@ function createWindow() {
     }
   });
 
-  // Load the running FastAPI web application (Render cloud endpoint)
-  mainWindow.loadURL(`https://myagent-807h.onrender.com`).catch((err) => {
-    console.error('Failed to load Render web application URL:', err);
+  // Always load the page through the locally-spawned FastAPI backend so Jinja2
+  // template variables (window.NEXT_PUBLIC_*, etc.) actually get rendered and
+  // relative /api & /static URLs resolve correctly.
+  //
+  // IMPORTANT: templates/index.html is a server-side Jinja2 template (note the
+  // {{ ... }} placeholders and {% raw %} tags near the top). Loading it directly
+  // off disk via loadFile() uses the file:// protocol, which skips Jinja2
+  // rendering entirely. That leaves the literal '{% raw %}' text sitting inside
+  // the <script type="text/babel"> block, which Babel cannot parse -- so the React
+  // app never mounts and the page is stuck on the static "Loading..." placeholder
+  // forever. It also breaks every relative fetch('/api/...') call since there's
+  // no HTTP origin under file://. Always go through the real backend instead.
+  mainWindow.loadURL(BACKEND_URL).catch((err) => {
+    console.error('[Electron] Failed to load local backend UI, falling back to remote:', err);
+    mainWindow.loadURL('https://myagent-807h.onrender.com').catch((fallbackErr) => {
+      console.error('[Electron] Failed to load Render web application URL:', fallbackErr);
+    });
   });
 
   mainWindow.on('closed', function () {
@@ -120,7 +254,16 @@ function setupPty() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  try {
+    // Spawn the FastAPI backend and wait for it to be ready
+    await spawnBackendProcess();
+    console.log('[Electron] Backend is ready, initializing UI...');
+  } catch (err) {
+    console.error('[Electron] Backend initialization failed:', err.message);
+    // Continue anyway - frontend will show connection error
+  }
+
   setupPty();
   startWatchingWorkspace();
   createWindow();
@@ -131,6 +274,15 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', function () {
+  // Clean up backend process on exit
+  if (backendProcess) {
+    console.log('[Backend] Terminating backend process...');
+    try {
+      backendProcess.kill();
+    } catch (e) {
+      console.error('[Backend] Error killing process:', e);
+    }
+  }
   if (process.platform !== 'darwin') app.quit();
 });
 

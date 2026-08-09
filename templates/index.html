@@ -1068,6 +1068,8 @@
             const [userSession, setUserSession] = useState(null);
             const [authLoading, setAuthLoading] = useState(true);
             const [supabaseClient, setSupabaseClient] = useState(null);
+            const [backendError, setBackendError] = useState(null); // { message, retry }
+            const [retryCount, setRetryCount] = useState(0);
 
             // Monaco Editor instance
             const [monacoInstance, setMonacoInstance] = useState(null);
@@ -1171,9 +1173,25 @@
                         setAuthLoading(false);
                     });
                 } else {
-                    // Backend cookie verification fallback
-                    fetch('/auth/me')
-                        .then(res => res.ok ? res.json() : null)
+                    // Backend cookie verification fallback with timeout and error handling
+                    const fetchWithTimeout = async (url, timeout = 5000) => {
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), timeout);
+                        
+                        try {
+                            const res = await fetch(url, { signal: controller.signal });
+                            clearTimeout(timeoutId);
+                            return res.ok ? res.json() : null;
+                        } catch (err) {
+                            clearTimeout(timeoutId);
+                            if (err.name === 'AbortError') {
+                                throw new Error('Request timeout - backend is not responding');
+                            }
+                            throw err;
+                        }
+                    };
+
+                    fetchWithTimeout('/auth/me', 5000)
                         .then(data => {
                             if (data && data.authenticated !== false) {
                                 setUserSession({
@@ -1185,10 +1203,16 @@
                                 setUserSession(null);
                             }
                             setAuthLoading(false);
+                            setBackendError(null);
                         })
-                        .catch(() => {
+                        .catch((err) => {
+                            console.error('[Auth] Failed to fetch auth status:', err.message);
                             setUserSession(null);
                             setAuthLoading(false);
+                            setBackendError({
+                                message: err.message || 'Failed to connect to backend. Make sure FastAPI server is running.',
+                                canRetry: true
+                            });
                         });
                 }
 
@@ -2116,6 +2140,54 @@
                 }
             };
 
+            // Retry backend connection
+            const handleRetryBackendConnection = () => {
+                setBackendError(null);
+                setAuthLoading(true);
+                setRetryCount(prev => prev + 1);
+                
+                // Retry auth check with new AbortController
+                const fetchWithTimeout = async (url, timeout = 5000) => {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), timeout);
+                    
+                    try {
+                        const res = await fetch(url, { signal: controller.signal });
+                        clearTimeout(timeoutId);
+                        return res.ok ? res.json() : null;
+                    } catch (err) {
+                        clearTimeout(timeoutId);
+                        if (err.name === 'AbortError') {
+                            throw new Error('Request timeout - backend is not responding');
+                        }
+                        throw err;
+                    }
+                };
+
+                fetchWithTimeout('/auth/me', 5000)
+                    .then(data => {
+                        if (data && data.authenticated !== false) {
+                            setUserSession({
+                                username: data.name || data.username || "GitHub User",
+                                avatar: data.avatar_url || "https://github.com/identicons/guest.png",
+                                email: data.email || `@${data.username}`
+                            });
+                        } else {
+                            setUserSession(null);
+                        }
+                        setAuthLoading(false);
+                        setBackendError(null);
+                    })
+                    .catch((err) => {
+                        console.error('[Auth Retry] Failed to fetch auth status:', err.message);
+                        setAuthLoading(false);
+                        setBackendError({
+                            message: err.message || 'Failed to connect to backend. Make sure FastAPI server is running.',
+                            canRetry: true
+                        });
+                    });
+            };
+
             return (
                 <div class="flex flex-col h-[100dvh] text-white bg-[#131313] select-none font-sans overflow-hidden">
                     {/* Toast Notification Bar */}
@@ -2127,6 +2199,55 @@
                             </div>
                         ))}
                     </div>
+
+                    {/* Backend Connection Error Overlay */}
+                    {backendError && (
+                        <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-[9998] p-4">
+                            <div class="bg-panelBg border border-red-500/50 rounded-lg max-w-md w-full p-6 space-y-4 shadow-2xl">
+                                <div class="flex items-center space-x-3 text-red-400">
+                                    <i class="fa-solid fa-triangle-exclamation text-2xl"></i>
+                                    <h2 class="text-lg font-bold">Backend Connection Error</h2>
+                                </div>
+                                
+                                <div class="text-sm text-gray-300 space-y-2">
+                                    <p class="font-mono bg-[#131313] p-3 rounded border border-red-500/30 text-red-300">
+                                        {backendError.message}
+                                    </p>
+                                    <p class="text-xs text-gray-400">
+                                        The FastAPI backend server is not responding. This could mean:
+                                    </p>
+                                    <ul class="text-xs text-gray-400 list-disc list-inside space-y-1 pl-2">
+                                        <li>Backend process failed to start</li>
+                                        <li>Port 8000 is already in use</li>
+                                        <li>Dependencies not installed</li>
+                                        <li>Network connectivity issue</li>
+                                    </ul>
+                                </div>
+
+                                <div class="flex gap-3 pt-2">
+                                    <button 
+                                        onClick={handleRetryBackendConnection}
+                                        class="flex-1 bg-brandBlue hover:bg-blue-600 text-white font-bold py-2 px-4 rounded transition-colors flex items-center justify-center space-x-2"
+                                    >
+                                        <i class="fa-solid fa-rotate-right"></i>
+                                        <span>Retry Connection</span>
+                                    </button>
+                                    <button 
+                                        onClick={() => window.location.reload()}
+                                        class="flex-1 bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded transition-colors"
+                                    >
+                                        Reload Page
+                                    </button>
+                                </div>
+
+                                {retryCount > 0 && (
+                                    <p class="text-xs text-gray-500 text-center pt-2">
+                                        Retry attempt: {retryCount}
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                    )}
 
                     {/* Top Navbar */}
                     <div class="h-12 border-b border-borderCol flex items-center justify-between px-4 bg-panelBg relative flex-shrink-0">
