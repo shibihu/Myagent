@@ -1273,45 +1273,67 @@
 
             // Listen to dynamic disk changes in Electron
             useEffect(() => {
-                if (window.terminalAPI && window.terminalAPI.onFileChanged) {
-                    window.terminalAPI.onFileChanged((data) => {
-                        console.log("[Electron Disk Change Detected]", data);
-                        // Refresh File tree
+                let debounceTimeout = null;
+
+                const handleDiskChange = (data) => {
+                    console.log("[Electron Disk Change Detected]", data);
+
+                    // Debounce file list & git changes fetches to prevent UI stutter/spam
+                    if (debounceTimeout) {
+                        clearTimeout(debounceTimeout);
+                    }
+                    debounceTimeout = setTimeout(() => {
                         fetchFilesList();
                         fetchGitChanges();
+                    }, 150);
 
-                        // If the modified file is currently open, re-fetch active editor content!
-                        if (data.filename) {
-                            const changedPath = data.filename.replace(/\\/g, '/');
-                            if (activeTab && (activeTab === changedPath || activeTab.endsWith(changedPath))) {
-                                if (window.terminalAPI.readFile) {
-                                    window.terminalAPI.readFile(activeTab)
-                                        .then(fileData => {
-                                            if (fileData && fileData.status === "success" && editorInstance) {
-                                                const currentVal = editorInstance.getValue();
-                                                if (fileData.content !== currentVal) {
-                                                    editorInstance.setValue(fileData.content);
-                                                    setDirtyTabs(prev => prev.filter(t => t !== activeTab));
-                                                }
+                    // Normalize path and check if the open tab is affected
+                    const pathToCheck = data.filePath || data.filename;
+                    if (pathToCheck) {
+                        const changedPath = pathToCheck.replace(/\\/g, '/');
+                        if (activeTab && (activeTab === changedPath || activeTab.endsWith(changedPath))) {
+                            if (window.terminalAPI && window.terminalAPI.readFile) {
+                                window.terminalAPI.readFile(activeTab)
+                                    .then(fileData => {
+                                        if (fileData && fileData.status === "success" && editorInstance) {
+                                            const currentVal = editorInstance.getValue();
+                                            if (fileData.content !== currentVal) {
+                                                editorInstance.setValue(fileData.content);
+                                                setDirtyTabs(prev => prev.filter(t => t !== activeTab));
                                             }
-                                        });
-                                } else {
-                                    fetch(`/api/ide/file?path=${encodeURIComponent(activeTab)}`)
-                                        .then(res => res.ok ? res.json() : null)
-                                        .then(fileData => {
-                                            if (fileData && fileData.status === "success" && editorInstance) {
-                                                const currentVal = editorInstance.getValue();
-                                                if (fileData.content !== currentVal) {
-                                                    editorInstance.setValue(fileData.content);
-                                                    setDirtyTabs(prev => prev.filter(t => t !== activeTab));
-                                                }
+                                        }
+                                    });
+                            } else {
+                                fetch(`/api/ide/file?path=${encodeURIComponent(activeTab)}`)
+                                    .then(res => res.ok ? res.json() : null)
+                                    .then(fileData => {
+                                        if (fileData && fileData.status === "success" && editorInstance) {
+                                            const currentVal = editorInstance.getValue();
+                                            if (fileData.content !== currentVal) {
+                                                editorInstance.setValue(fileData.content);
+                                                setDirtyTabs(prev => prev.filter(t => t !== activeTab));
                                             }
-                                        });
-                                }
+                                        }
+                                    });
                             }
                         }
-                    });
+                    }
+                };
+
+                if (window.terminalAPI) {
+                    if (window.terminalAPI.onDiskChanged) {
+                        window.terminalAPI.onDiskChanged(handleDiskChange);
+                    }
+                    if (window.terminalAPI.onFileChanged) {
+                        window.terminalAPI.onFileChanged(handleDiskChange);
+                    }
                 }
+
+                return () => {
+                    if (debounceTimeout) {
+                        clearTimeout(debounceTimeout);
+                    }
+                };
             }, [activeTab, editorInstance]);
 
             // Setup Monaco Editor inside editorRef container

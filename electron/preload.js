@@ -11,5 +11,6 @@ contextBridge.exposeInMainWorld('terminalAPI', {
   readFile: (filepath) => ipcRenderer.invoke('fs:read-file', { filepath }),
   deletePath: (path) => ipcRenderer.invoke('fs:delete', { path }),
   renamePath: (oldPath, newPath) => ipcRenderer.invoke('fs:rename', { oldPath, newPath }),
-  onFileChanged: (callback) => ipcRenderer.on('workspace:file-changed', (event, data) => callback(data))
+  onFileChanged: (callback) => ipcRenderer.on('workspace:file-changed', (event, data) => callback(data)),
+  onDiskChanged: (callback) => ipcRenderer.on('workspace:disk-changed', (event, data) => callback(data))
 });
