@@ -10,6 +10,8 @@ let fsWatcher;
 
 function startWatchingWorkspace() {
   const fs = require('fs');
+  const chokidar = require('chokidar');
+
   if (fsWatcher) {
     try {
       fsWatcher.close();
@@ -18,14 +20,25 @@ function startWatchingWorkspace() {
 
   if (fs.existsSync(activeWorkspaceDir)) {
     try {
-      fsWatcher = fs.watch(activeWorkspaceDir, { recursive: true }, (eventType, filename) => {
+      fsWatcher = chokidar.watch(activeWorkspaceDir, {
+        ignored: /(^|[\/\\])\.git/, // Ignore heavy .git directories but allow other dotfiles like .github_config
+        persistent: true,
+        ignoreInitial: true,
+        depth: 9
+      });
+
+      fsWatcher.on('all', (event, filePath) => {
         if (mainWindow) {
-          mainWindow.webContents.send('workspace:file-changed', { eventType, filename });
+          mainWindow.webContents.send('workspace:disk-changed', { event, filePath });
+          // Also keep workspace:file-changed for backward compatibility if needed
+          const relativePath = path.relative(activeWorkspaceDir, filePath);
+          mainWindow.webContents.send('workspace:file-changed', { eventType: event, filename: relativePath });
         }
       });
-      console.log(`[FS Watcher] Started watching directory: ${activeWorkspaceDir}`);
+
+      console.log(`[Chokidar Watcher] Started watching directory: ${activeWorkspaceDir}`);
     } catch (e) {
-      console.error(`[FS Watcher] Failed to watch ${activeWorkspaceDir}:`, e);
+      console.error(`[Chokidar Watcher] Failed to watch ${activeWorkspaceDir}:`, e);
     }
   }
 }
