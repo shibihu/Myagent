@@ -1466,6 +1466,22 @@
 
             // Fetch list of files recursive
             const fetchFilesList = () => {
+                if (window.terminalAPI && window.terminalAPI.listFiles) {
+                    window.terminalAPI.listFiles()
+                        .then(data => {
+                            if (data && data.status === "success") {
+                                setFiles(data.files || []);
+                                setFileTree(data.tree || null);
+                            } else {
+                                triggerToast("Failed to load local workspace files" + (data && data.message ? `: ${data.message}` : ""), "error");
+                            }
+                        })
+                        .catch(err => {
+                            triggerToast("Failed to load local workspace files: " + err.message, "error");
+                        });
+                    return;
+                }
+
                 fetch('/api/ide/files')
                     .then(res => res.ok ? res.json() : null)
                     .then(data => {

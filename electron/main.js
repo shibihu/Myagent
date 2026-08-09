@@ -43,6 +43,43 @@ function startWatchingWorkspace() {
   }
 }
 
+function buildFsTreeRecursive(dirPath, basePath) {
+  const fs = require('fs');
+  const name = dirPath === basePath ? 'root' : path.basename(dirPath);
+  let relPath = path.relative(basePath, dirPath).replace(/\\/g, '/');
+  if (relPath === '.') relPath = '';
+
+  const stat = fs.statSync(dirPath);
+  const isDir = stat.isDirectory();
+  const node = { name, path: relPath, isDirectory: isDir };
+
+  if (isDir) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dirPath);
+    } catch (e) {
+      entries = [];
+    }
+
+    const children = [];
+    for (const entry of entries.sort()) {
+      if (
+        entry.startsWith('.') ||
+        entry === '__pycache__' ||
+        entry === 'node_modules' ||
+        entry === '.github_config.json' ||
+        entry.endsWith('.tmp')
+      ) {
+        continue;
+      }
+      children.push(buildFsTreeRecursive(path.join(dirPath, entry), basePath));
+    }
+    node.children = children;
+  }
+
+  return node;
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -156,6 +193,52 @@ ipcMain.handle('set-active-workspace', async (event, newWorkspacePath) => {
 });
 
 // Direct Disk Persistence IPC Handlers (File CRUD operations)
+ipcMain.handle('fs:list-files', async () => {
+  const fs = require('fs');
+  try {
+    if (!fs.existsSync(activeWorkspaceDir)) {
+      return {
+        status: 'success',
+        files: [],
+        tree: { name: 'root', path: '', isDirectory: true, children: [] }
+      };
+    }
+
+    const filesList = [];
+    const walk = (dir) => {
+      let entries = [];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch (e) {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name === '__pycache__' || entry.name === 'node_modules') {
+          continue;
+        }
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(fullPath);
+        } else {
+          if (entry.name.endsWith('.tmp') || entry.name === '.github_config.json') {
+            continue;
+          }
+          const relPath = path.relative(activeWorkspaceDir, fullPath).replace(/\\/g, '/');
+          filesList.push(relPath);
+        }
+      }
+    };
+    walk(activeWorkspaceDir);
+    filesList.sort();
+
+    const tree = buildFsTreeRecursive(activeWorkspaceDir, activeWorkspaceDir);
+
+    return { status: 'success', files: filesList, tree };
+  } catch (err) {
+    return { status: 'error', message: err.message };
+  }
+});
+
 ipcMain.handle('fs:create-file', async (event, { filepath }) => {
   const fs = require('fs').promises;
   const targetPath = path.isAbsolute(filepath) ? filepath : path.join(activeWorkspaceDir, filepath);

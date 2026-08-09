@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('terminalAPI', {
   onData: (callback) => ipcRenderer.on('terminal-incoming-data', (event, data) => callback(data)),
   resize: (cols, rows) => ipcRenderer.send('terminal-resize', { cols, rows }),
   setActiveWorkspace: (newWorkspacePath) => ipcRenderer.invoke('set-active-workspace', newWorkspacePath),
+  listFiles: () => ipcRenderer.invoke('fs:list-files'),
   createFile: (filepath) => ipcRenderer.invoke('fs:create-file', { filepath }),
   createFolder: (folderPath) => ipcRenderer.invoke('fs:create-folder', { folderPath }),
   saveFile: (filepath, content) => ipcRenderer.invoke('fs:save-file', { filepath, content }),
